@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================================================
+   MyNav 全局基础样式（Clean & Minimal 设计系统）
+   ----------------------------------------------------------------
+   - 完整对齐设计稿 token 体系：颜色/排版/圆角/阴影/间距/动效
+   - 默认浅色主题，themeStore 加载后会覆盖关键变量实现主题切换
+   - 所有组件统一使用 token 类名（bg-page / bg-surface / text-primary 等）
+   ================================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- 主品牌色（Indigo 系） ---- */
+  --color-primary: #4F6EF7;
+  --color-primary-50: #EEF1FE;
+  --color-primary-100: #D9DFFD;
+  --color-primary-200: #B3BEFB;
+  --color-primary-300: #8D9DF9;
+  --color-primary-400: #6780F8;
+  --color-primary-500: #4F6EF7;
+  --color-primary-600: #3D56E6;
+  --color-primary-700: #2D40B5;
+  --color-primary-800: #1E2D85;
+  --color-primary-900: #0F1A55;
+
+  /* ---- 中性色阶 ---- */
+  --color-neutral-0: #FFFFFF;
+  --color-neutral-50: #F8F9FC;
+  --color-neutral-100: #F1F3F8;
+  --color-neutral-200: #E5E8F0;
+  --color-neutral-300: #CBD1DE;
+  --color-neutral-400: #9AA3B8;
+  --color-neutral-500: #6B7590;
+  --color-neutral-600: #4A5168;
+  --color-neutral-700: #363D51;
+  --color-neutral-800: #252A3A;
+  --color-neutral-900: #161A26;
+
+  /* ---- 语义状态色 ---- */
+  --state-success: #22C55E;
+  --state-success-light: #F0FDF4;
+  --state-warning: #F59E0B;
+  --state-warning-light: #FFFBEB;
+  --state-error: #EF4444;
+  --state-error-light: #FEF2F2;
+  --state-info: #3B82F6;
+  --state-info-light: #EFF6FF;
+
+  /* ---- 表面/背景（themeStore 会覆盖） ---- */
+  --bg-page: #F8F9FC;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --bg-inset: #F1F3F8;
+  --bg-overlay: rgba(22, 26, 38, 0.4);
+
+  /* ---- 文字（themeStore 会覆盖） ---- */
+  --text-primary: #161A26;
+  --text-secondary: #4A5168;
+  --text-tertiary: #9AA3B8;
+  --text-inverse: #FFFFFF;
+  --text-link: #4F6EF7;
+
+  /* ---- 边框（themeStore 会覆盖） ---- */
+  --border-default: #E5E8F0;
+  --border-strong: #CBD1DE;
+  --border-focus: #4F6EF7;
+
+  /* ---- 圆角阶 ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  /* 卡片圆角（themeStore 控制） */
+  --radius-card: 12px;
+
+  /* ---- 阴影（低饱和度，浮动层加深） ---- */
+  --shadow-xs: 0 1px 2px rgba(22, 26, 38, 0.04);
+  --shadow-sm: 0 1px 3px rgba(22, 26, 38, 0.05);
+  --shadow-md: 0 4px 12px rgba(22, 26, 38, 0.05);
+  --shadow-lg: 0 8px 24px rgba(22, 26, 38, 0.08);
+  --shadow-xl: 0 16px 48px rgba(22, 26, 38, 0.12);
+  /* 卡片阴影（themeStore 控制） */
+  --shadow-card: 0 1px 3px rgba(22, 26, 38, 0.05);
+
+  /* ---- 字体 ---- */
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+
+  /* ---- 字号阶 ---- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+
+  /* ---- 字重 ---- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- 间距 ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---- z-index 阶 ---- */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+
+  /* ---- 过渡 ---- */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ---- 控件高度 ---- */
+  --control-height-sm: 28px;
+  --control-height-md: 36px;
+  --control-height-lg: 44px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
+}
+
+/* ===== 通用 token 工具类（消费 CSS 变量） ===== */
+@layer components {
+  /* 背景 */
+  .bg-page { background-color: var(--bg-page); }
+  .bg-surface { background-color: var(--bg-surface); }
+  .bg-elevated { background-color: var(--bg-elevated); }
+  .bg-inset { background-color: var(--bg-inset); }
+  .bg-brand { background-color: var(--color-primary); }
+  .bg-brand-light { background-color: var(--color-primary-50); }
+
+  /* 文字 */
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-tertiary { color: var(--text-tertiary); }
+  .text-inverse { color: var(--text-inverse); }
+  .text-brand { color: var(--color-primary); }
+  .text-success { color: var(--state-success); }
+  .text-warning { color: var(--state-warning); }
+  .text-error { color: var(--state-error); }
+
+  /* 边框 */
+  .border-default { border-color: var(--border-default); }
+  .border-strong { border-color: var(--border-strong); }
+  .border-focus { border-color: var(--border-focus); }
+
+  /* 卡片容器（白底 + 边框 + 阴影，对齐设计稿） */
+  .surface-card {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* 玻璃磨砂导航栏（sticky + backdrop-blur） */
+  .glass-nav {
+    background-color: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-default);
+  }
+}
+
+/* ===== 进入动画 ===== */
+@keyframes fade-in {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* ===== Toast 侧边滑入动画 ===== */
+@keyframes toast-slide-in {
+  0% { opacity: 0; transform: translateX(120%); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.toast-slide-in {
+  animation: toast-slide-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ===== 卡片悬停（对齐设计稿：translateY + 阴影加深） ===== */
+.card-hover {
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--border-strong);
+}
+
+/* ===== 自定义滚动条（浅色） ===== */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-300);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral-400);
+}
+
+/* 隐藏滚动条（用于侧边栏垂直滚动 / 移动端横向滚动） */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 表格换行处理 */
+td, th { word-break: break-word; }
+th { white-space: nowrap; }
