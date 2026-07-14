@@ -1,6 +1,9 @@
 name: Build and Push Docker Image to Aliyun ACR
 
 on:
+  push:
+    tags:
+      - 'v*'
   release:
     types: [published]
   workflow_dispatch:
@@ -55,7 +58,9 @@ jobs:
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          # better-sqlite3 是原生 C++ 模块，在 QEMU 模拟的 arm64 环境下编译会崩溃
+          # 如需 arm64 支持，建议使用 ARM 原生运行器或本地构建后手动推送 manifest
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
