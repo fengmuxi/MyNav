@@ -140,6 +140,120 @@ node dist/index.js # 运行编译后的服务
 | POST | /api/admin/item | Admin | 创建卡片 |
 | PUT  | /api/admin/item/:id | Admin | 更新卡片 |
 
+## Docker 一键部署
+
+项目提供单镜像 Docker 部署方案，前后端打包在同一个镜像中，后端托管前端静态资源，部署简单。
+
+### 方式一：Docker Compose（推荐）
+
+```bash
+# 1. 复制环境变量配置文件
+cp .env.example .env
+
+# 2. 编辑 .env，修改 JWT_SECRET 等关键配置
+# （可选，默认配置也能运行）
+
+# 3. 构建并启动
+docker compose up -d --build
+
+# 4. 查看日志
+docker compose logs -f
+
+# 5. 停止服务
+docker compose down
+```
+
+访问 `http://localhost:3000` 即可使用。
+
+### 方式二：纯 Docker 命令
+
+```bash
+# 构建镜像
+docker build -t mynav .
+
+# 运行容器
+docker run -d \
+  --name mynav \
+  -p 3000:3000 \
+  -v ./data/database:/app/data \
+  -v ./data/uploads:/app/uploads \
+  -e JWT_SECRET=your-super-secret-key \
+  mynav
+```
+
+### Docker 数据持久化
+
+数据通过 Docker Volume 持久化，存放在项目根目录的 `data/` 文件夹下：
+
+```
+data/
+├── database/    # SQLite 数据库文件（database.db）
+└── uploads/     # 用户上传文件（头像等）
+```
+
+删除容器不会丢失数据，如需完全重置，删除 `data/` 目录即可。
+
+### 环境变量说明
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `APP_PORT` | 对外暴露端口 | `3000` |
+| `JWT_SECRET` | JWT 签名密钥（**生产环境务必修改**） | `change-me-to-a-random-secret-key` |
+| `ADMIN_PASSWORD` | 管理员密码（服务器级备份加密） | 空 |
+| `MAIL_HOST` | SMTP 服务器地址 | 空 |
+| `MAIL_PORT` | SMTP 端口 | `587` |
+| `MAIL_USER` | SMTP 用户名 | 空 |
+| `MAIL_PASS` | SMTP 密码 | 空 |
+| `MAIL_FROM` | 发件人显示 | 空 |
+
+## 自动构建与发布（GitHub Actions）
+
+项目配置了 GitHub Actions 工作流，发布 Release 时自动构建 Docker 镜像并推送到阿里云容器镜像服务（ACR）。
+
+### 配置步骤
+
+1. **登录阿里云控制台**，进入「容器镜像服务 ACR」，创建命名空间和镜像仓库。
+
+2. **获取访问凭证**：ACR 实例详情 -> 访问凭证，记录「登录用户名」和「固定/临时密码」。
+
+3. **在 GitHub 仓库中配置 Secrets**：
+   Settings -> Secrets and variables -> Actions -> New repository secret
+
+   | Secret 名称 | 说明 | 示例值 |
+   | --- | --- | --- |
+   | `ALIYUN_REGISTRY` | 镜像仓库地址 | `registry.cn-hangzhou.aliyuncs.com` |
+   | `ALIYUN_NAMESPACE` | 命名空间 | `your-namespace` |
+   | `ALIYUN_REPOSITORY` | 仓库名（可选，默认使用仓库名） | `mynav` |
+   | `ALIYUN_USERNAME` | 阿里云登录用户名 | `your_aliyun_username` |
+   | `ALIYUN_PASSWORD` | 阿里云登录密码 | `your_password` |
+
+4. **触发构建**：
+   - **自动触发**：在 GitHub 仓库发布一个 Release（Create a new release），工作流会自动运行。
+   - **手动触发**：进入 Actions -> Build and Push Docker Image -> Run workflow，输入标签后运行。
+
+5. **使用构建好的镜像**：
+
+   ```bash
+   # 从阿里云拉取镜像（替换为你的仓库地址）
+   docker pull registry.cn-hangzhou.aliyuncs.com/your-namespace/mynav:latest
+
+   # 运行容器
+   docker run -d \
+     --name mynav \
+     -p 3000:3000 \
+     -v ./data/database:/app/data \
+     -v ./data/uploads:/app/uploads \
+     -e JWT_SECRET=your-super-secret-key \
+     registry.cn-hangzhou.aliyuncs.com/your-namespace/mynav:latest
+   ```
+
+### 工作流特性
+
+- **多架构支持**：同时构建 `linux/amd64` 和 `linux/arm64` 镜像
+- **智能标签**：Release 自动打 `latest`、`v1.0.0`、`v1.0` 标签
+- **构建缓存**：使用 GitHub Actions 缓存加速重复构建
+- **手动触发**：支持 `workflow_dispatch` 手动运行并指定标签
+
 ## 常见问题
 
 **Q: `better-sqlite3` 安装/编译失败？**
@@ -149,4 +263,7 @@ A: 确保已安装 Python 与 C++ 编译工具链（Windows 需 `npm i -g window
 A: 检查后端是否启动；确认 Vite 代理 `localhost:3000` 与后端端口一致。
 
 **Q: 想清空数据重新开始？**
-A: 删除根目录 `database.db`，重启后端会重新建表并 Seed。
+A: 删除根目录 `database.db`（开发环境）或 `data/database/database.db`（Docker 部署），重启后端会重新建表并 Seed。
+
+**Q: Docker 构建失败，提示 better-sqlite3 编译错误？**
+A: Dockerfile 中已包含 `python3 make g++` 等编译依赖。如果在 ARM 架构（如 Apple Silicon）上构建，确保使用支持的基础镜像。

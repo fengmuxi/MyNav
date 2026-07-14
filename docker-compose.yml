@@ -1,0 +1,31 @@
+services:
+  mynav:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mynav
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_PATH=/app/data/database.db
+      - UPLOADS_PATH=/app/uploads
+      - PUBLIC_DIR=/app/public
+      - JWT_SECRET=${JWT_SECRET:-change-me-to-a-random-secret-key}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - MAIL_HOST=${MAIL_HOST:-}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USER=${MAIL_USER:-}
+      - MAIL_PASS=${MAIL_PASS:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+    volumes:
+      - ./data/database:/app/data
+      - ./data/uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
