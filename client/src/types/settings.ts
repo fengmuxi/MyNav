@@ -50,6 +50,9 @@ export interface SystemSettings {
   force2FA: boolean;
   maintenanceMode: boolean;
   maintenanceNotice: string;
+  /** GitHub 开源信息（页脚展示 + 版本检查） */
+  githubEnabled: boolean;
+  githubUrl: string;
   smtp: SmtpConfig;
 }
 
@@ -66,6 +69,9 @@ export interface PublicSystemSettings {
   enableSearch: boolean;
   maintenanceMode: boolean;
   maintenanceNotice: string;
+  /** GitHub 开源信息（仅当 githubEnabled=true 时有效） */
+  githubEnabled: boolean;
+  githubUrl: string;
 }
 
 /** 第三方提供方展示元数据（品牌色与图标 key） */
@@ -119,5 +125,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   force2FA: false,
   maintenanceMode: false,
   maintenanceNotice: '',
+  githubEnabled: true,
+  githubUrl: 'https://github.com/fengmuxi/MyNav',
   smtp: { ...DEFAULT_SMTP },
 };

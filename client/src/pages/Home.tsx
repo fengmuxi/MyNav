@@ -51,7 +51,12 @@ export default function Home() {
   const [activeGroup, setActiveGroup] = useState<'all' | 'top' | string>('top');
   // 标记是否已执行过首次自动回退（避免重复回退影响用户后续手动切换）
   const hasInitialFallback = useRef(false);
+  const [showVersionModal, setShowVersionModal] = useState(false);
   const settings = useSettingsStore((s) => s.settings);
+  const version = useSettingsStore((s) => s.version);
+  const versionCheck = useSettingsStore((s) => s.versionCheck);
+  const versionChecking = useSettingsStore((s) => s.versionChecking);
+  const checkVersion = useSettingsStore((s) => s.checkVersion);
 
   // ===== 首页内联编辑：添加 / 编辑 / 删除卡片 =====
   const [showCreateItem, setShowCreateItem] = useState(false);
@@ -1319,11 +1324,243 @@ export default function Home() {
         )}
       </Modal>
 
+      {/* ====== 版本详情 Modal ====== */}
+      <Modal
+        open={showVersionModal}
+        onClose={() => setShowVersionModal(false)}
+        title="版本信息"
+      >
+        <div className="space-y-5">
+          {/* 本地版本信息 */}
+          <div
+            className="p-4 rounded-xl"
+            style={{
+              backgroundColor: 'var(--bg-inset)',
+              border: '1px solid var(--border-default)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                当前版本
+              </span>
+              {!versionCheck?.hasUpdate && versionCheck?.remote && (
+                <span
+                  className="text-[11px] px-2 py-0.5 rounded-full"
+                  style={{
+                    backgroundColor: 'var(--state-success-light, rgba(16, 185, 129, 0.12))',
+                    color: 'var(--state-success, #10B981)',
+                  }}
+                >
+                  已是最新
+                </span>
+              )}
+              {versionCheck?.hasUpdate && (
+                <span
+                  className="text-[11px] px-2 py-0.5 rounded-full"
+                  style={{
+                    backgroundColor: 'var(--state-warning-light, rgba(245, 158, 11, 0.12))',
+                    color: 'var(--state-warning, #F59E0B)',
+                  }}
+                >
+                  有可用更新
+                </span>
+              )}
+            </div>
+            <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {version?.version ?? '加载中…'}
+            </div>
+            <div className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+              发布日期：{version?.releaseDate ?? '—'}
+            </div>
+            {version?.changelogSummary && (
+              <div className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                {version.changelogSummary}
+              </div>
+            )}
+          </div>
+
+          {/* 远端版本信息（仅当检查结果存在且有远端版本时显示） */}
+          {versionCheck?.remote && (
+            <div
+              className="p-4 rounded-xl"
+              style={{
+                backgroundColor: versionCheck.hasUpdate
+                  ? 'var(--state-warning-light, rgba(245, 158, 11, 0.06))'
+                  : 'var(--bg-inset)',
+                border: `1px solid ${versionCheck.hasUpdate
+                  ? 'var(--state-warning, rgba(245, 158, 11, 0.3))'
+                  : 'var(--border-default)'}`,
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                  GitHub 最新版本
+                </span>
+                <span
+                  className="text-[11px] px-2 py-0.5 rounded-full"
+                  style={{
+                    backgroundColor: versionCheck.hasUpdate
+                      ? 'var(--state-warning-light, rgba(245, 158, 11, 0.12))'
+                      : 'var(--state-success-light, rgba(16, 185, 129, 0.12))',
+                    color: versionCheck.hasUpdate
+                      ? 'var(--state-warning, #F59E0B)'
+                      : 'var(--state-success, #10B981)',
+                  }}
+                >
+                  {versionCheck.hasUpdate ? '新版本' : '已同步'}
+                </span>
+              </div>
+              <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {versionCheck.remote.version}
+              </div>
+              <div className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                发布日期：{versionCheck.remote.publishedAt
+                  ? new Date(versionCheck.remote.publishedAt).toLocaleDateString('zh-CN')
+                  : '—'}
+              </div>
+              {versionCheck.remote.name && versionCheck.remote.name !== versionCheck.remote.version && (
+                <div className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                  {versionCheck.remote.name}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 更新日志（有远端版本且包含 changelog 时显示） */}
+          {versionCheck?.remote?.changelog && (
+            <div>
+              <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                更新日志
+              </div>
+              <div
+                className="p-4 rounded-xl text-sm leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap break-words"
+                style={{
+                  backgroundColor: 'var(--bg-inset)',
+                  border: '1px solid var(--border-default)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {versionCheck.remote.changelog}
+              </div>
+            </div>
+          )}
+
+          {/* 检查状态提示（未检查到远端版本时） */}
+          {!versionCheck?.remote && (
+            <div
+              className="p-3 rounded-xl text-xs text-center"
+              style={{
+                backgroundColor: 'var(--bg-inset)',
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              {versionCheck?.message ?? '尚未检查 GitHub 最新版本'}
+            </div>
+          )}
+
+          {/* 检查时间 & 操作按钮 */}
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              {versionCheck?.checkedAt
+                ? `检查于 ${new Date(versionCheck.checkedAt).toLocaleString('zh-CN')}`
+                : ''}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => checkVersion()}
+                disabled={versionChecking}
+                className="px-3 py-1.5 text-xs rounded-lg transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{
+                  backgroundColor: 'var(--bg-inset)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                {versionChecking ? '检查中…' : '重新检查'}
+              </button>
+              {versionCheck?.remote?.htmlUrl && (
+                <a
+                  href={versionCheck.remote.htmlUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 text-xs rounded-lg font-medium transition-opacity hover:opacity-90"
+                  style={{
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'white',
+                  }}
+                >
+                  前往 Release
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       <footer
         className="mx-auto max-w-6xl w-full px-4 sm:px-6 py-8 text-center text-xs"
         style={{ color: 'var(--text-tertiary)' }}
       >
-        {settings?.siteName ?? 'MyNav'} · {settings?.siteDescription ?? '个人导航'} {settings?.icp ? `· ${settings.icp}` : ''}
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+          <span>{settings?.siteName ?? 'MyNav'} · {settings?.siteDescription ?? '个人导航'}</span>
+          {settings?.icp && <span>· {settings.icp}</span>}
+          {/* 本地版本号 + 更新日期 */}
+          {version && (
+            <span>
+              · {version.version}（{version.releaseDate}）
+            </span>
+          )}
+          {/* GitHub 开源入口 */}
+          {settings?.githubEnabled && settings.githubUrl && (
+            <a
+              href={settings.githubUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 ml-1 transition-opacity hover:opacity-80"
+              style={{ color: 'var(--text-secondary)' }}
+              title="前往 GitHub 仓库"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.2-3.1-.12-.29-.52-1.46.11-3.05 0 0 .98-.31 3.2 1.18a11.1 11.1 0 0 1 5.83 0c2.22-1.49 3.2-1.18 3.2-1.18.63 1.59.23 2.76.11 3.05.75.81 1.2 1.84 1.2 3.1 0 4.42-2.69 5.39-5.25 5.68.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z" />
+              </svg>
+              GitHub
+            </a>
+          )}
+          {/* 版本更新提示：仅当 GitHub 启用且检查到有更新时显示 */}
+          {settings?.githubEnabled && versionCheck?.hasUpdate && versionCheck.remote && (
+            <button
+              type="button"
+              onClick={() => setShowVersionModal(true)}
+              className="inline-flex items-center gap-1 ml-1 px-2 py-0.5 rounded-full text-[11px] transition-opacity hover:opacity-80"
+              style={{
+                backgroundColor: 'var(--state-warning-light, rgba(245, 158, 11, 0.12))',
+                color: 'var(--state-warning, #F59E0B)',
+                cursor: 'pointer',
+              }}
+              title={versionCheck.message}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                <polyline points="21 4 21 10 15 10" />
+              </svg>
+              发现新版本 {versionCheck.remote.version}
+            </button>
+          )}
+          {/* 手动检查版本按钮 */}
+          {settings?.githubEnabled && settings.githubUrl && (
+            <button
+              type="button"
+              onClick={() => setShowVersionModal(true)}
+              disabled={versionChecking}
+              className="inline-flex items-center gap-1 ml-1 transition-opacity hover:opacity-80 disabled:opacity-50"
+              style={{ color: 'var(--text-tertiary)' }}
+              title="查看版本信息与更新日志"
+            >
+              {versionChecking ? '检查中…' : '检查更新'}
+            </button>
+          )}
+        </div>
       </footer>
     </div>
   );

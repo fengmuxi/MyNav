@@ -1,0 +1,130 @@
+# ============================================================
+#  GitHub Release 自动化工作流
+#  ----------------------------------------------------------------
+#  触发条件：推送 v* 格式的 tag（如 v1.0.0、v1.0.1-beta）
+#
+#  自动行为：
+#    1. 从 tag 名提取版本号
+#    2. 从 CHANGELOG.md 中提取对应版本段落作为 Release 正文
+#    3. 从 server/src/version.ts 提取 CHANGELOG_SUMMARY 作为 Release 标题后缀
+#    4. 创建 GitHub Release（自动判断是否为预发布）
+#
+#  依赖链路：
+#    本工作流创建 Release 后，docker-build.yml 会因 release: published 事件
+#    被自动触发，开始构建并推送 Docker 镜像
+# ============================================================
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 检出代码（fetch-depth: 0 以获取完整历史，便于读取 CHANGELOG.md）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 从 tag 引用中提取纯版本号（v1.0.1）
+      - name: Extract version from tag
+        id: version
+        run: |
+          # GITHUB_REF 形如 refs/tags/v1.0.1
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "当前发布的 tag: $TAG"
+          echo "当前发布的版本号: $VERSION"
+
+      # 3. 从 CHANGELOG.md 提取对应版本的段落作为 Release 正文
+      #    匹配规则：## [vX.Y.Z] — YYYY-MM-DD 到下一个 ## [ 之间
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          # 使用 awk 提取对应版本段落
+          # - 匹配开头：## [vX.Y.Z] 开头行
+          # - 持续输出直到下一个 ## [ 开头行（不包含）
+          # - 若未匹配到则输出默认提示
+          BODY=$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; print; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)
+
+          if [ -z "$BODY" ]; then
+            BODY="本次发布未在 CHANGELOG.md 中找到对应版本（$VERSION）的变更记录，请手动补充。"
+            echo "::warning::CHANGELOG.md 中未找到 $VERSION 段落"
+          fi
+
+          # 写入到文件，避免多行字符串在 GITHUB_OUTPUT 中处理转义问题
+          echo "$BODY" > /tmp/release-body.md
+          echo "body_file=/tmp/release-body.md" >> "$GITHUB_OUTPUT"
+
+      # 4. 从 server/src/version.ts 提取 CHANGELOG_SUMMARY 作为 Release 标题后缀
+      - name: Extract changelog summary
+        id: summary
+        run: |
+          SUMMARY=$(grep -oP "CHANGELOG_SUMMARY\s*=\s*'[^']*'" server/src/version.ts \
+                    | sed "s/.*= *'//; s/'$//")
+          if [ -z "$SUMMARY" ]; then
+            SUMMARY=""
+            echo "::warning::server/src/version.ts 中未找到 CHANGELOG_SUMMARY"
+          fi
+          # 转义换行（虽然此处应该是单行）
+          SUMMARY="${SUMMARY//$'\n'/ }"
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+      # 5. 判断是否为预发布版本（tag 含 -alpha / -beta / -rc 等后缀）
+      - name: Determine prerelease flag
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" =~ -(alpha|beta|rc|pre)(\.|$) ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "标记为预发布版本: $VERSION"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "标记为正式发布版本: $VERSION"
+          fi
+
+      # 6. 创建 GitHub Release
+      #    - name：vX.Y.Z - <摘要>（摘要为空时仅用版本号）
+      #    - body：CHANGELOG.md 对应段落
+      #    - prerelease：步骤 5 的判断结果
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}${{ steps.summary.outputs.summary && format(' - {0}', steps.summary.outputs.summary) || '' }}
+          body_path: ${{ steps.changelog.outputs.body_file }}
+          draft: false
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 7. 输出汇总信息
+      - name: Output release info
+        run: |
+          echo "=========================================="
+          echo "  GitHub Release 已创建"
+          echo "=========================================="
+          echo "Tag:        ${{ steps.version.outputs.tag }}"
+          echo "Version:    ${{ steps.version.outputs.version }}"
+          echo "Prerelease: ${{ steps.prerelease.outputs.is_prerelease }}"
+          echo "Summary:    ${{ steps.summary.outputs.summary }}"
+          echo "Body file:  ${{ steps.changelog.outputs.body_file }}"
+          echo "=========================================="
+          echo "后续触发："
+          echo "  - docker-build.yml 将因 release: published 事件自动触发"
+          echo "  - 开始构建并推送 Docker 镜像到阿里云 ACR"

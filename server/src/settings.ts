@@ -55,6 +55,9 @@ export interface SystemSettings {
   // 维护设置
   maintenanceMode: boolean;
   maintenanceNotice: string;
+  // GitHub 开源信息（页脚展示 + 版本检查）
+  githubEnabled: boolean;
+  githubUrl: string;
   // 邮件 SMTP 配置（用于忘记密码等邮件通知）
   smtp: SmtpConfig;
 }
@@ -133,6 +136,8 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   force2FA: false,
   maintenanceMode: false,
   maintenanceNotice: '',
+  githubEnabled: true,
+  githubUrl: 'https://github.com/fengmuxi/MyNav',
   smtp: { ...DEFAULT_SMTP },
 };
 
@@ -156,6 +161,9 @@ export interface PublicSystemSettings {
   enableSearch: boolean;
   maintenanceMode: boolean;
   maintenanceNotice: string;
+  /** GitHub 开源信息（仅当 githubEnabled=true 时有效） */
+  githubEnabled: boolean;
+  githubUrl: string;
 }
 
 /** 将完整设置脱敏为公开设置 */
@@ -174,6 +182,8 @@ export function toPublicSettings(s: SystemSettings): PublicSystemSettings {
     enableSearch: s.enableSearch,
     maintenanceMode: s.maintenanceMode,
     maintenanceNotice: s.maintenanceNotice,
+    githubEnabled: s.githubEnabled,
+    githubUrl: s.githubUrl,
   };
 }
 

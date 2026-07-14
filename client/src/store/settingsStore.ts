@@ -8,16 +8,53 @@
  * - icp: ICP备案号（页脚）
  * - 其余字段用于注册、主题、搜索等功能开关
  *
+ * 版本检查：
+ * - version: 本地打包版本信息（版本号、发布日期、变更摘要）
+ * - versionCheck: GitHub Release 对比结果（含 hasUpdate 字段供前端提示更新）
+ *
  * 无需 persist：设置由服务端管理，每次刷新重新拉取即可。
  */
 import { create } from 'zustand';
 import api from '../api/axios';
 import type { PublicSystemSettings } from '../types/settings';
 
+/** 本地打包版本信息 */
+export interface VersionInfo {
+  version: string;
+  releaseDate: string;
+  changelogSummary: string;
+}
+
+/** GitHub Release 远端版本信息 */
+export interface RemoteVersionInfo {
+  version: string;
+  name: string;
+  publishedAt: string;
+  htmlUrl: string;
+  changelog: string;
+}
+
+/** 版本检查响应 */
+export interface VersionCheckResult {
+  local: VersionInfo;
+  remote: RemoteVersionInfo | null;
+  isLatest: boolean;
+  hasUpdate: boolean;
+  message: string;
+  checkedAt: string;
+}
+
 interface SettingsState {
   settings: PublicSystemSettings | null;
   loaded: boolean;
+  /** 本地版本信息（页面加载时一并拉取） */
+  version: VersionInfo | null;
+  /** 版本检查结果（含远端版本与是否有更新） */
+  versionCheck: VersionCheckResult | null;
+  versionChecking: boolean;
   load: () => Promise<void>;
+  /** 主动触发版本检查（按钮点击或 footer 加载时调用） */
+  checkVersion: () => Promise<void>;
 }
 
 const DEFAULT_PUBLIC: PublicSystemSettings = {
@@ -32,6 +69,8 @@ const DEFAULT_PUBLIC: PublicSystemSettings = {
   enableSearch: true,
   maintenanceMode: false,
   maintenanceNotice: '',
+  githubEnabled: true,
+  githubUrl: 'https://github.com/fengmuxi/MyNav',
 };
 
 /**
@@ -50,9 +89,12 @@ function applyFavicon(href: string) {
   link.href = href;
 }
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: null,
   loaded: false,
+  version: null,
+  versionCheck: null,
+  versionChecking: false,
 
   load: async () => {
     try {
@@ -63,6 +105,29 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       // 后端不可用：使用默认值，避免页面空白
       set({ settings: DEFAULT_PUBLIC, loaded: true });
       if (DEFAULT_PUBLIC.siteIcon) applyFavicon(DEFAULT_PUBLIC.siteIcon);
+    }
+    // 并行拉取本地版本信息（失败静默处理）
+    try {
+      const { data: v } = await api.get<VersionInfo>('/settings/version');
+      set({ version: v });
+    } catch {
+      /* 版本信息拉取失败不影响主流程 */
+    }
+    // 若已启用 GitHub 信息，则自动触发一次版本检查
+    const settings = get().settings;
+    if (settings?.githubEnabled && settings.githubUrl) {
+      void get().checkVersion();
+    }
+  },
+
+  checkVersion: async () => {
+    if (get().versionChecking) return;
+    set({ versionChecking: true });
+    try {
+      const { data } = await api.get<VersionCheckResult>('/settings/version/check');
+      set({ versionCheck: data, versionChecking: false });
+    } catch {
+      set({ versionChecking: false });
     }
   },
 }));

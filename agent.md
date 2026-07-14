@@ -273,6 +273,8 @@ App.tsx 中定义三种路由守卫：
 | force2FA | 是否强制双因素认证 | false |
 | maintenanceMode | 是否维护模式 | false |
 | maintenanceNotice | 维护公告 | '' |
+| githubEnabled | 是否显示 GitHub 开源入口 | false |
+| githubUrl | GitHub 仓库地址（用于页脚跳转与版本检查） | '' |
 | smtp.enabled | SMTP 是否启用 | false |
 | smtp.host | SMTP 主机 | '' |
 | smtp.port | SMTP 端口 | 465 |
@@ -314,3 +316,199 @@ App.tsx 中定义三种路由守卫：
 - 管理员账号：`admin`
 - 管理员密码：`123456`
 - JWT 密钥：见 `server/.env` 的 `JWT_SECRET`（开发默认值已硬编码兜底，生产必须覆盖）。
+
+---
+
+## 14. 版本管理规范（强制）
+
+### 14.1 单一来源
+
+- **版本信息唯一来源**：[server/src/version.ts](server/src/version.ts)
+- 任何版本号、发布日期、变更摘要的修改必须从此文件入手，禁止散落到其他位置
+- 前端通过 `GET /api/settings/version` 读取版本信息，禁止在前端硬编码版本号
+
+### 14.2 版本号规则
+
+采用 [Semantic Versioning](https://semver.org/lang/zh-CN/)：`v<major>.<minor>.<patch>`
+
+| 位 | 何时递增 |
+| --- | --- |
+| major | 不兼容的 API 变更（数据库 schema 重构、接口字段删除/重命名等） |
+| minor | 向下兼容的功能新增（新增接口、新增字段、新增页面） |
+| patch | 向下兼容的缺陷修复（bug 修复、UI 微调、文案修改） |
+
+- 版本号始终带 `v` 前缀（如 `v1.0.0`），与 GitHub Release tag 保持一致
+- 预发布版本可追加 `-alpha` / `-beta` / `-rc.1` 等后缀
+
+### 14.3 发布新版本必须执行的步骤
+
+每次发布新版本时，**必须**按顺序完成以下三步，缺一不可：
+
+1. **更新 [server/src/version.ts](server/src/version.ts)**
+   - 修改 `VERSION` 为新版本号（含 `v` 前缀）
+   - 修改 `RELEASE_DATE` 为发布日期（ISO 日期格式 `YYYY-MM-DD`）
+   - 修改 `CHANGELOG_SUMMARY` 为一句话摘要
+
+2. **更新 [CHANGELOG.md](CHANGELOG.md)**
+   - 在文件顶部追加新版本段落：`## [vX.Y.Z] — YYYY-MM-DD`
+   - 按 `新增` / `变更` / `修复` / `移除` 等分类列出本次变更
+   - 详细记录数据库 schema 变更、API 变更、配置变更
+
+3. **发布 GitHub Release**
+   - 在 GitHub 仓库创建新 Release，tag 必须与 `VERSION` 完全一致
+   - Release 标题建议为 `vX.Y.Z - <一句话摘要>`
+   - Release 内容建议直接粘贴 CHANGELOG.md 中对应版本段落
+   - 此 Release 将作为前端「检查更新」的对比基准
+
+### 14.4 版本对比机制
+
+- **本地版本**：来自 [server/src/version.ts](server/src/version.ts) 的 `VERSION`
+- **远端版本**：GitHub Releases 最新 tag_name（`https://api.github.com/repos/{owner}/{repo}/releases/latest`）
+- **对比方式**：语义化版本比较（去除 `v` 前缀，按 `major.minor.patch` 逐段比较）
+- **缓存策略**：服务端 5 分钟内存缓存，避免频繁请求 GitHub API 触发限流
+- **接口**：
+  - `GET /api/settings/version` 返回本地版本信息
+  - `GET /api/settings/version/check` 对比 GitHub 最新版本，返回 `{ hasUpdate, isLatest, remote, local, message }`
+
+### 14.5 GitHub 仓库配置
+
+- 管理员在后台「系统设置 → GitHub 开源信息」中配置：
+  - `githubEnabled`：是否在前端页脚显示 GitHub 入口与版本检查
+  - `githubUrl`：仓库主页地址（如 `https://github.com/owner/repo`）
+- 后端会自动从 `githubUrl` 解析出 `owner/repo`，拼接 GitHub API URL
+- 未启用或未配置时，前端不显示 GitHub 入口与版本检查按钮
+
+### 14.6 文件清单
+
+涉及版本管理的文件：
+
+| 文件 | 作用 |
+| --- | --- |
+| [server/src/version.ts](server/src/version.ts) | 版本信息单一来源（VERSION / RELEASE_DATE / CHANGELOG_SUMMARY） |
+| [CHANGELOG.md](CHANGELOG.md) | 详细变更日志，每次发版必须追加 |
+| [server/src/routes/settings.ts](server/src/routes/settings.ts) | 版本检查接口（GitHub API 代理 + 缓存 + semver 对比） |
+| [client/src/store/settingsStore.ts](client/src/store/settingsStore.ts) | 前端版本状态管理 |
+| [client/src/pages/Home.tsx](client/src/pages/Home.tsx) | 页脚显示版本号 + GitHub 链接 + 更新提示 |
+| [client/src/pages/Admin/SystemSettings.tsx](client/src/pages/Admin/SystemSettings.tsx) | 后台 GitHub 配置入口 |
+| [.github/workflows/release.yml](.github/workflows/release.yml) | 推送 tag 时自动创建 GitHub Release |
+
+### 14.7 快速发版指令（Agent 必须遵守）
+
+当用户对 Agent 说出以下任一指令时，Agent **必须**按本节流程自动执行完整的发版操作，**不得**仅执行其中部分步骤：
+
+- 「提交 tag」
+- 「发版」
+- 「发布版本」
+- 「打 tag」
+- 「release vX.Y.Z」（指定具体版本号）
+
+#### 触发条件判定
+
+1. 若用户在指令中指定了版本号（如「提交 tag v1.0.1」），则以指定版本号为准
+2. 若用户未指定版本号，则 Agent 必须询问用户本次属于哪一类变更：
+   - **major**：不兼容的 API 变更 → 递增 major 位（v1.0.0 → v2.0.0）
+   - **minor**：新增功能 → 递增 minor 位（v1.0.0 → v1.1.0）
+   - **patch**：修复缺陷 → 递增 patch 位（v1.0.0 → v1.0.1）
+3. 询问用户本次变更的简短摘要（一句话）和详细变更列表（新增/变更/修复/移除）
+
+#### 执行流程（严格按顺序，任一步骤失败立即停止并报告）
+
+```
+步骤 1：读取当前版本号
+  - 读取 server/src/version.ts 中的 VERSION 常量
+  - 解析出当前 major.minor.patch
+  - 计算出新版本号 newVersion（含 v 前缀）
+
+步骤 2：更新 server/src/version.ts
+  - 将 VERSION 改为 newVersion
+  - 将 RELEASE_DATE 改为当天日期（YYYY-MM-DD，时区 Asia/Shanghai）
+  - 将 CHANGELOG_SUMMARY 改为用户提供的一句话摘要
+
+步骤 3：更新 CHANGELOG.md
+  - 在文件顶部「---」分隔线之后、上一个版本段落之前插入新版本段落
+  - 段落格式：
+    ## [vX.Y.Z] — YYYY-MM-DD
+
+    ### 新增
+    - xxx
+
+    ### 变更
+    - xxx
+
+    ### 修复
+    - xxx
+
+    ### 移除
+    - xxx
+  - 若某分类无内容则整段省略，不要留空标题
+  - 内容来自用户提供的详细变更列表
+
+步骤 4：Git 提交
+  - git add server/src/version.ts CHANGELOG.md
+  - 提交信息格式（中文）：
+    release: vX.Y.Z - <一句话摘要>
+  - 示例：release: v1.0.1 - 修复登录失败锁定逻辑缺陷
+
+步骤 5：创建并推送 Git Tag
+  - git tag vX.Y.Z
+  - git push origin vX.Y.Z
+  - 同时推送主分支提交：git push origin HEAD
+
+步骤 6：验证与提示
+  - 输出本次发版摘要：
+    ✓ 版本号：vX.Y.Z
+    ✓ 发布日期：YYYY-MM-DD
+    ✓ Git Tag：已推送
+    ✓ GitHub Release：将由 .github/workflows/release.yml 自动创建
+    ✓ Docker 镜像：Release 发布后将由 .github/workflows/docker-build.yml 自动构建
+  - 提醒用户可在 GitHub 仓库 Actions 页面查看构建进度
+```
+
+#### 约束
+
+- **禁止**跳过步骤 2 或 3（version.ts 和 CHANGELOG.md 必须同步更新）
+- **禁止**在未征得用户同意的情况下递增 major 位（major 变更需明确确认）
+- **禁止**修改版本号格式（必须 `v` 前缀 + 三段数字）
+- **禁止**将本次发版的变更内容混入上一版本的段落中
+- **禁止**使用 `git push --force` 推送 tag
+- 若 Git 工作区存在未提交的其他改动，应先提示用户处理或暂存，避免污染发版提交
+
+### 14.8 GitHub Release 自动化
+
+工作流文件：[.github/workflows/release.yml](.github/workflows/release.yml)
+
+#### 触发条件
+
+- 当且仅当向仓库推送 `v*` 格式的 tag 时触发（如 `v1.0.0`、`v1.0.1`）
+
+#### 自动行为
+
+1. 检出代码（需 `fetch-depth: 0` 以获取完整历史）
+2. 从 tag 名提取版本号（如 `refs/tags/v1.0.1` → `v1.0.1`）
+3. 从 [CHANGELOG.md](CHANGELOG.md) 中提取对应版本的段落作为 Release 正文
+   - 提取规则：匹配 `## [vX.Y.Z] — YYYY-MM-DD` 标题到下一个 `## [` 之间的内容
+   - 若未匹配到则使用默认正文（提示用户检查 CHANGELOG.md）
+4. 调用 `softprops/action-gh-release@v2` 创建 GitHub Release
+   - tag_name：触发本工作流的 tag
+   - name：`vX.Y.Z - <CHANGELOG_SUMMARY>`（若提取不到摘要则仅用版本号）
+   - body：步骤 3 提取的 CHANGELOG 段落
+   - draft: false
+   - prerelease: 自动判断（tag 含 `-alpha` / `-beta` / `-rc` 后缀时标记为预发布）
+
+#### 依赖关系
+
+- 本工作流创建 Release 后，[docker-build.yml](.github/workflows/docker-build.yml) 会因 `release: published` 事件被自动触发，开始构建并推送 Docker 镜像
+- 因此推送 tag 后的完整链路为：
+  ```
+  git push origin vX.Y.Z
+    → release.yml 触发 → 创建 GitHub Release
+    → docker-build.yml 触发 → 构建并推送 Docker 镜像到阿里云 ACR
+  ```
+
+#### 失败排查
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| Release 未创建 | tag 名不以 `v` 开头 | 检查 tag 格式 |
+| Release 正文为默认提示 | CHANGELOG.md 中未找到对应版本段落 | 检查 CHANGELOG.md 是否包含 `## [vX.Y.Z]` 标题 |
+| 权限错误 | GITHUB_TOKEN 权限不足 | 工作流已配置 `contents: write`，无需额外配置 |

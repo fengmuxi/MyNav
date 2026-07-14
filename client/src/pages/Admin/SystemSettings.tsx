@@ -875,6 +875,48 @@ export default function SystemSettings() {
           </div>
         </section>
 
+        {/* ====== 6.5 GitHub 开源信息配置 ====== */}
+        <section className={sectionCls} style={sectionStyle}>
+          <div className="mb-5">
+            <h2 className={titleCls} style={titleStyle}>GitHub 开源信息</h2>
+            <p className={subtitleCls} style={subtitleStyle}>
+              配置后将在页脚展示开源仓库链接，并支持自动检查 GitHub Release 是否有新版本
+            </p>
+          </div>
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  显示 GitHub 开源入口
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                  开启后页脚将显示 GitHub 仓库链接与版本检查入口
+                </div>
+              </div>
+              <Toggle
+                checked={settings.githubEnabled}
+                onChange={(v) => patch('githubEnabled', v)}
+                aria-label="显示 GitHub 开源入口"
+              />
+            </div>
+            <div>
+              <label className={labelCls} style={labelStyle}>GitHub 仓库地址</label>
+              <input
+                type="url"
+                value={settings.githubUrl}
+                onChange={(e) => patch('githubUrl', e.target.value)}
+                placeholder="https://github.com/your-username/your-repo"
+                className={inputCls}
+                style={inputStyle}
+                {...focusHandlers()}
+              />
+              <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                填写仓库主页地址，系统会自动调用 GitHub API 检查最新 Release 版本
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* ====== 7. 服务器数据备份与恢复 ====== */}
         <section className={sectionCls} style={sectionStyle}>
           <div className="mb-5">
