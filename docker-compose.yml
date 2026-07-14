@@ -1,6 +1,6 @@
 services:
   mynav:
-    image: mynav:latest
+    image: registry.cn-hangzhou.aliyuncs.com/fengmuxi-docker-images/mynav:latest
     container_name: mynav
     restart: unless-stopped
     ports:
