@@ -40,7 +40,12 @@ const AVATARS_ROOT = path.join(UPLOADS_ROOT, 'avatars');
 const ICONS_ROOT = path.join(UPLOADS_ROOT, 'icons');
 
 // 1) 初始化数据库（首次启动会自动建表 + seed）
-initDatabase();
+try {
+  initDatabase();
+} catch (err) {
+  console.error('[Fatal] 数据库初始化失败：', err);
+  process.exit(1);
+}
 
 // 2) 确保上传目录存在（recursive: true 会一并创建父目录）
 fs.mkdirSync(AVATARS_ROOT, { recursive: true });
@@ -221,7 +226,9 @@ if (PUBLIC_DIR && fs.existsSync(PUBLIC_DIR)) {
     index: 'index.html',
   }));
   // SPA 回退：非 API / 非上传资源的 GET 请求统一返回 index.html
-  app.get(/^\/(?!api\/|uploads\/).*/, (_req, res) => {
+  // - 排除 /api、/uploads（包含 /api/、/uploads/ 及其本身）
+  // - 排除 /api/、/uploads/ 下的所有子路径
+  app.get(/^\/(?!api(\/|$)|uploads(\/|$)).*/, (_req, res) => {
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
   });
   console.log(`[Server] 已启用前端静态托管：${PUBLIC_DIR}`);

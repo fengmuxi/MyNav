@@ -6,7 +6,7 @@
  * 2. 创建「搜索引擎」「开发工具」两个公共分组及示例链接
  * 全部操作使用事务，保证幂等（已存在则跳过）。
  */
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
@@ -35,6 +35,7 @@ function sqliteTransaction(
  * 种子管理员账户
  * - 若 admin 已存在则跳过
  * - 密码使用 bcrypt 哈希（saltRounds=10）
+ * - bcrypt 是原生模块，在 Alpine 上可能编译失败，增加错误捕获
  */
 function seedAdmin(db: BetterSQLite3Database<typeof schema>): void {
   const existing = db
@@ -45,7 +46,15 @@ function seedAdmin(db: BetterSQLite3Database<typeof schema>): void {
 
   if (existing) return;
 
-  const passwordHash = bcrypt.hashSync('123456', 10);
+  let passwordHash: string;
+  try {
+    passwordHash = bcrypt.hashSync('123456', 10);
+  } catch (err) {
+    console.error('[Seed] bcrypt 原生模块加载失败，请确保 Dockerfile 中已安装编译工具');
+    console.error('[Seed] 错误详情：', err);
+    throw err;
+  }
+
   db.insert(schema.users)
     .values({
       username: 'admin',

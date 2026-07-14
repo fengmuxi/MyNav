@@ -1,6 +1,6 @@
 services:
   mynav:
-    image: registry.cn-hangzhou.aliyuncs.com/fengmuxi-docker-images/mynav:latest
+    image: mynav:latest
     container_name: mynav
     restart: unless-stopped
     ports:
@@ -12,18 +12,13 @@ services:
       - UPLOADS_PATH=/app/uploads
       - PUBLIC_DIR=/app/public
       - JWT_SECRET=${JWT_SECRET:-xK9mP2nL4vQ8wR1tS6yU3zX5cV0bFhJ7}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      - MAIL_HOST=${MAIL_HOST:-}
-      - MAIL_PORT=${MAIL_PORT:-587}
-      - MAIL_USER=${MAIL_USER:-}
-      - MAIL_PASS=${MAIL_PASS:-}
-      - MAIL_FROM=${MAIL_FROM:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-123456}
     volumes:
       - ./data/database:/app/data
       - ./data/uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health", "||", "exit", "1"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s

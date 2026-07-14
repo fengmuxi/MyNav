@@ -11,7 +11,7 @@
  * { background, surfaceColor, accentColor, textColor, cardRadius, cardShadow, presetId }
  */
 import { Router } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
 import fs from 'node:fs';
 import path from 'node:path';

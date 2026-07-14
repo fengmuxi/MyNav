@@ -7,7 +7,7 @@
  * - POST /api/auth/reset-password    重置密码：校验 token 并设置新密码
  */
 import { Router } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { and, eq, gt } from 'drizzle-orm';
 import { db } from '../db/index.js';

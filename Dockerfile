@@ -9,6 +9,9 @@ FROM node:20-alpine AS client-builder
 
 WORKDIR /app/client
 
+# 配置国内 npm 镜像源加速
+RUN npm config set registry https://registry.npmmirror.com
+
 COPY client/package*.json ./
 RUN npm ci
 
@@ -28,10 +31,15 @@ FROM node:20-alpine AS server-builder
 
 WORKDIR /app/server
 
-RUN apk add --no-cache python3 make g++
+# 配置国内 npm 镜像源 + 安装构建工具
+# - npm_config_registry: npm 包镜像
+# - npm_config_disturl: node-gyp 下载 Node headers 的镜像（编译原生模块必需）
+ENV npm_config_registry=https://registry.npmmirror.com
+ENV npm_config_disturl=https://npmmirror.com/mirrors/node
+RUN apk add --no-cache python3 make g++ linux-headers
 
-COPY server/package*.json ./
-RUN npm ci
+COPY server/package.json ./
+RUN rm -f package-lock.json && npm install
 
 COPY server/tsconfig.json ./
 COPY server/src ./src
@@ -44,11 +52,18 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
+# 安装运行时所需的构建工具（better-sqlite3 是原生 C++ 模块，需要从源码编译）
+# - python3：node-gyp 需要
+# - make g++ linux-headers：编译 C++ 原生模块
+# - libc6-compat：alpine 兼容 glibc 库的预编译 binary
+# - dumb-init：正确处理 PID 1 信号转发（容器场景下必需）
+ENV npm_config_registry=https://registry.npmmirror.com
+ENV npm_config_disturl=https://npmmirror.com/mirrors/node
+RUN apk add --no-cache python3 make g++ linux-headers libc6-compat dumb-init
 
-# 安装后端生产依赖
-COPY server/package*.json ./
-RUN npm ci --omit=dev
+# 安装后端生产依赖（bcryptjs 是纯 JS，仅 better-sqlite3 需要编译）
+COPY server/package.json ./
+RUN rm -f package-lock.json && npm install --omit=dev
 
 # 复制后端编译产物
 COPY --from=server-builder /app/server/dist ./dist
@@ -69,9 +84,9 @@ RUN mkdir -p /app/data /app/uploads
 # 暴露端口
 EXPOSE 3000
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"
+# 健康检查：使用 wget 避免 Node 启动开销
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1
 
-# 启动命令
-CMD ["node", "dist/index.js"]
+# 启动命令：使用 dumb-init 正确处理 PID 1 信号（Ctrl+C、SIGTERM 等）
+CMD ["dumb-init", "node", "dist/index.js"]

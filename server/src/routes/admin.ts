@@ -18,7 +18,7 @@
  * - DELETE /api/admin/users/:id       删除用户
  */
 import { Router } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import {
