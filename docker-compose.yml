@@ -1,8 +1,6 @@
 services:
   mynav:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: registry.cn-hangzhou.aliyuncs.com/fengmuxi-docker-images/mynav:latest
     container_name: mynav
     restart: unless-stopped
     ports:
@@ -13,7 +11,7 @@ services:
       - DATABASE_PATH=/app/data/database.db
       - UPLOADS_PATH=/app/uploads
       - PUBLIC_DIR=/app/public
-      - JWT_SECRET=${JWT_SECRET:-change-me-to-a-random-secret-key}
+      - JWT_SECRET=${JWT_SECRET:-xK9mP2nL4vQ8wR1tS6yU3zX5cV0bFhJ7}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - MAIL_HOST=${MAIL_HOST:-}
       - MAIL_PORT=${MAIL_PORT:-587}
