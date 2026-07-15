@@ -28,8 +28,12 @@
 ## [Unreleased]
 
 ### 新增
+- 新增数据库版本化迁移系统（migrations.ts），维护 schema_migrations 表追踪数据库版本号，启动时自动检查并执行未应用的迁移，确保旧版数据库兼容升级
+- CREATE TABLE 语句补全 users 表全部字段（display_name/email/bio/avatar/status/failed_login_attempts/locked_until），新库直接创建最新完整结构
+- agent.md 新增 4.1 数据库迁移与版本管理规范，约束后续数据库结构修改必须追加版本化迁移
 
 ### 变更
+- 重构 index.ts 数据库初始化逻辑：移除 ad-hoc 增量迁移代码，改用 runMigrations() 版本化迁移引擎统一管理
 
 ### 修复
 

@@ -22,7 +22,7 @@
 
 ```
 client/src/  → components/{ui,nav}, pages(/Admin), store, api, types, App.tsx
-server/src/  → db(schema/seed), routes, middleware, crypto, logger, mailer, settings, version, zip, index.ts
+server/src/  → db(schema/seed/migrations), routes, middleware, crypto, logger, mailer, settings, version, zip, index.ts
 server/uploads/{avatars,icons}  database.db(运行时生成)
 ```
 
@@ -39,6 +39,29 @@ server/uploads/{avatars,icons}  database.db(运行时生成)
 | navItemClicks | 点击记录（userId 可空） |
 
 **约束**：布尔用 `integer`(0/1)；`shape`=`rounded|square`、`size`=`sm|md|lg`；外键 `onDelete: 'cascade'`；列表按 `localeCompare('zh')` 排序。
+
+### 4.1 数据库迁移与版本管理（强制）
+
+项目使用版本化迁移系统（[server/src/db/migrations.ts](server/src/db/migrations.ts)），确保旧版数据库在升级新版本时自动兼容。
+
+**核心机制**：
+- `schema_migrations` 表记录已应用的迁移版本号
+- 启动时 `runMigrations()` 读取当前版本，依次执行未应用的迁移
+- 每个迁移在独立事务中执行，失败则回滚，不残留半完成状态
+- 迁移必须**幂等**（可重复执行），使用 `hasColumn`/`hasTable` 辅助函数先检查再操作
+
+**三步初始化流程**（`index.ts` → `initSchema()`）：
+1. `CREATE TABLE IF NOT EXISTS`：新库直接创建最新结构，旧库跳过
+2. `runMigrations()`：对旧库补充缺失列/结构，对新库幂等跳过
+3. `seedDatabase()`：首次启动创建管理员和示例导航
+
+**修改数据库结构的强制规则**：
+当需要新增列、修改列类型或新增表时，**必须**按以下步骤操作：
+1. 在 `migrations.ts` 的 `migrations` 数组末尾追加新迁移，`version` 递增（当前最新版本见 `LATEST_DB_VERSION`）
+2. 迁移 `up` 函数中用 `hasColumn`/`hasTable` 检查后再 `ALTER TABLE` / `CREATE TABLE`，保证幂等
+3. 同步更新 `schema.ts` 的 Drizzle 定义和 `index.ts` 的 `CREATE TABLE` 语句
+4. 禁止直接修改已发布的迁移（已应用的迁移不可变），只能追加新迁移
+5. `schema_migrations` 表不参与数据备份/恢复（属于 schema 元数据，非用户数据）
 
 ## 5. API 路由
 

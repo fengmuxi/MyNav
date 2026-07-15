@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from './schema.js';
 import { seedDatabase } from './seed.js';
+import { runMigrations } from './migrations.js';
 
 // 解析当前模块路径，定位到服务器根目录（server/）
 const __filename = fileURLToPath(import.meta.url);
@@ -49,19 +50,32 @@ sqlite.pragma('foreign_keys = ON');
 export const db: BetterSQLite3Database<typeof schema> = drizzle(sqlite, { schema });
 
 /**
- * 自动建表
- * - 使用 CREATE TABLE IF NOT EXISTS，幂等且安全
- * - 字段定义与 schema.ts 保持一致
- * - 这样无需依赖 drizzle-kit 迁移文件即可首次启动自动建表
+ * 自动建表 + 版本化迁移
+ * ------------------------------------------------------------------
+ * 1. CREATE TABLE IF NOT EXISTS：新库直接创建最新结构（幂等，已存在的表跳过）
+ * 2. runMigrations()：版本化迁移引擎，检测旧库缺失列/结构并自动补充
+ *    - 维护 schema_migrations 表追踪数据库版本号
+ *    - 每个迁移在事务中执行，保证原子性
+ *    - 详见 migrations.ts
  */
 export function initSchema(): void {
+  // ── 1. 建表（新库直接创建最新结构，旧库跳过）──
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       username      TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      srp_salt      TEXT,
+      srp_verifier  TEXT,
       role          TEXT NOT NULL DEFAULT 'USER',
       theme         TEXT,
+      display_name  TEXT,
+      email         TEXT,
+      bio           TEXT,
+      avatar        TEXT,
+      status        TEXT NOT NULL DEFAULT 'active',
+      failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until  INTEGER NOT NULL DEFAULT 0,
       created_at    INTEGER NOT NULL
     );
 
@@ -122,104 +136,8 @@ export function initSchema(): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_nav_clicks_user_item ON nav_item_clicks(user_id, item_id);
   `);
 
-  // 增量迁移：对已存在的旧 users 表补充缺失列
-  // PRAGMA table_info 返回列信息；逐列检查，缺失则 ALTER TABLE 添加
-  const userCols = sqlite.prepare("PRAGMA table_info(users)").all() as { name: string }[];
-  if (userCols.length > 0) {
-    const has = (name: string) => userCols.some((c) => c.name === name);
-    if (!has('theme')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN theme TEXT");
-      console.log('[DB] 已为 users 表补充 theme 列');
-    }
-    if (!has('display_name')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN display_name TEXT");
-      console.log('[DB] 已为 users 表补充 display_name 列');
-    }
-    if (!has('email')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN email TEXT");
-      console.log('[DB] 已为 users 表补充 email 列');
-    }
-    if (!has('bio')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN bio TEXT");
-      console.log('[DB] 已为 users 表补充 bio 列');
-    }
-    if (!has('avatar')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
-      console.log('[DB] 已为 users 表补充 avatar 列');
-    }
-    if (!has('status')) {
-      // 已存在的旧用户默认置为 active
-      sqlite.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
-      console.log('[DB] 已为 users 表补充 status 列');
-    }
-    if (!has('failed_login_attempts')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0");
-      console.log('[DB] 已为 users 表补充 failed_login_attempts 列');
-    }
-    if (!has('locked_until')) {
-      sqlite.exec("ALTER TABLE users ADD COLUMN locked_until INTEGER NOT NULL DEFAULT 0");
-      console.log('[DB] 已为 users 表补充 locked_until 列');
-    }
-  }
-
-  // 增量迁移：nav_items.category_id 从 NOT NULL 改为可空，并新增 group_id 列
-  const itemCols = sqlite.prepare("PRAGMA table_info(nav_items)").all() as { name: string; notnull: number }[];
-  if (itemCols.length > 0) {
-    const catCol = itemCols.find((c) => c.name === 'category_id');
-    if (catCol && catCol.notnull === 1) {
-      // 重建 nav_items 表，去掉 category_id 的 NOT NULL 约束，新增 group_id 列
-      sqlite.exec(`
-        CREATE TABLE nav_items_new (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          title       TEXT NOT NULL,
-          url         TEXT NOT NULL,
-          icon        TEXT,
-          category_id INTEGER REFERENCES nav_categories(id) ON DELETE CASCADE,
-          group_id    INTEGER REFERENCES nav_groups(id) ON DELETE CASCADE,
-          order_index INTEGER NOT NULL DEFAULT 0,
-          color       TEXT DEFAULT '#1f2937',
-          shape       TEXT NOT NULL DEFAULT 'rounded',
-          size        TEXT NOT NULL DEFAULT 'sm',
-          note        TEXT
-        );
-        INSERT INTO nav_items_new (id, title, url, icon, category_id, group_id, order_index, color, shape, size)
-        SELECT i.id, i.title, i.url, i.icon, i.category_id, c.group_id, i.order_index, i.color, i.shape, i.size
-        FROM nav_items i
-        LEFT JOIN nav_categories c ON i.category_id = c.id;
-        DROP TABLE nav_items;
-        ALTER TABLE nav_items_new RENAME TO nav_items;
-      `);
-      console.log('[DB] 已将 nav_items.category_id 改为可空并新增 group_id 列');
-    } else {
-      // 表已重建过或新库，但仍可能缺少 group_id 列（如果跳过了上面的重建）
-      const hasGroupId = itemCols.some((c) => c.name === 'group_id');
-      if (!hasGroupId) {
-        sqlite.exec("ALTER TABLE nav_items ADD COLUMN group_id INTEGER REFERENCES nav_groups(id) ON DELETE CASCADE");
-        // 回填已有卡片的 group_id
-        sqlite.exec(`
-          UPDATE nav_items SET group_id = (
-            SELECT c.group_id FROM nav_categories c WHERE c.id = nav_items.category_id
-          )
-        `);
-        console.log('[DB] 已为 nav_items 表补充 group_id 列');
-      }
-    }
-
-    // 增量迁移：nav_items 的备注字段
-    // - 旧版本字段名为 description，需重命名为 note（保留数据）
-    // - 新库或已迁移过的库直接检查 note 列是否存在
-    const hasNote = itemCols.some((c) => c.name === 'note');
-    const hasOldDescription = itemCols.some((c) => c.name === 'description');
-    if (!hasNote && hasOldDescription) {
-      // 旧库已有 description 列，重命名为 note（SQLite 3.25+ 支持）
-      sqlite.exec("ALTER TABLE nav_items RENAME COLUMN description TO note");
-      console.log('[DB] 已将 nav_items.description 列重命名为 note');
-    } else if (!hasNote) {
-      // 新库或未添加过备注列的旧库，直接新增 note 列
-      sqlite.exec("ALTER TABLE nav_items ADD COLUMN note TEXT");
-      console.log('[DB] 已为 nav_items 表补充 note 列');
-    }
-  }
+  // ── 2. 版本化迁移：检测并补充旧库缺失的列/结构 ──
+  runMigrations(sqlite);
 }
 
 /**

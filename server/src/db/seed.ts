@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
+import { computeVerifier } from '../srp.js';
 
 export function seedDatabase(db: BetterSQLite3Database<typeof schema>): void {
   // 使用事务保证种子数据的原子性
@@ -55,10 +56,14 @@ function seedAdmin(db: BetterSQLite3Database<typeof schema>): void {
     throw err;
   }
 
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier('admin', '123456');
+
   db.insert(schema.users)
     .values({
       username: 'admin',
       passwordHash,
+      srpSalt,
+      srpVerifier,
       role: 'ADMIN',
     })
     .run();
