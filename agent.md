@@ -32,7 +32,7 @@ my-nav/
 │   │   │   ├── ui/        # AdminLayout, Button, Input, Modal, Navbar, Toast, Toggle, OAuthIcon
 │   │   │   └── nav/       # NavCard, NavGrid, ColorPicker, ThemePicker
 │   │   ├── pages/         # Home, Login, Register, ForgotPassword, ResetPassword
-│   │   │   ├── Admin/     # NavMgr, SystemSettings, UserMgr
+│   │   │   ├── Admin/     # NavMgr, SystemSettings, UserMgr, Logs
 │   │   │   └── MyNav, Profile, Settings
 │   │   ├── store/         # authStore, navStore, themeStore, toastStore, settingsStore (Zustand)
 │   │   ├── api/           # axios.ts, crypto.ts (RSA 加密)
@@ -44,12 +44,15 @@ my-nav/
 ├── server/          # 后端 Express
 │   ├── src/
 │   │   ├── db/            # index.ts(连接+建表), schema.ts, seed.ts
-│   │   ├── routes/        # auth.ts, nav.ts, user.ts, admin.ts, settings.ts
-│   │   ├── middleware/    # authMiddleware.ts, roleMiddleware.ts, maintenanceMiddleware.ts
+│   │   ├── routes/        # auth.ts, nav.ts, user.ts, admin.ts, settings.ts, logs.ts
+│   │   ├── middleware/    # authMiddleware.ts, roleMiddleware.ts, maintenanceMiddleware.ts, logMiddleware.ts
 │   │   ├── types/         # express.d.ts
 │   │   ├── crypto.ts      # RSA 密钥生成与加解密
+│   │   ├── logger.ts      # 系统日志核心（按天分割、大小轮转、SSE 推送）
 │   │   ├── mailer.ts      # SMTP 邮件发送
 │   │   ├── settings.ts    # 系统设置读写
+│   │   ├── version.ts     # 版本信息单一来源
+│   │   ├── zip.ts         # 极简 ZIP 工具（无外部依赖，用于数据备份）
 │   │   └── index.ts
 │   ├── uploads/           # 头像与图标上传目录
 │   ├── drizzle.config.ts
@@ -149,6 +152,8 @@ navGroups、navCategories、navItems 均按名称使用 `localeCompare('zh')` �
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
 | GET | /api/settings/public | 否 | 获取脱敏系统设置 |
+| GET | /api/settings/version | 否 | 获取本地版本信息 |
+| GET | /api/settings/version/check | 否 | 对比 GitHub 最新版本，返回是否有更新 |
 
 ### 5.8 管理后台路由 /api/admin
 
@@ -171,12 +176,27 @@ navGroups、navCategories、navItems 均按名称使用 `localeCompare('zh')` �
 | PUT | /api/admin/settings | Admin | 更新系统设置 |
 | GET | /api/admin/rsa/public-key | Admin | 查看 RSA 公钥信息 |
 | PUT | /api/admin/rsa/regenerate | Admin | 重新生成 RSA 密钥对 |
+| POST | /api/admin/backup/export | Admin | 导出加密数据备份（ZIP） |
+| POST | /api/admin/backup/import | Admin | 导入数据备份（解密 ZIP 并全量恢复） |
+
+### 5.9 日志管理路由 /api/admin/logs
+
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| GET | /api/admin/logs/config | Admin | 获取日志配置（文件大小、保留天数） |
+| PUT | /api/admin/logs/config | Admin | 更新日志配置 |
+| GET | /api/admin/logs/files | Admin | 列出所有日志文件 |
+| GET | /api/admin/logs/files/:filename | Admin | 读取指定日志文件内容（query: ?lines=500） |
+| GET | /api/admin/logs/stream | Admin | SSE 实时日志流 |
+| POST | /api/admin/logs/cleanup | Admin | 手动触发清理过期日志 |
 
 ## 6. 中间件规则
 
 - `authMiddleware`：从 `Authorization: Bearer <token>` 解析 JWT，验证后将 `user` 挂载到 `req.user`。过期/无效 token 返回 401。
 - `roleMiddleware`：检查 `req.user.role === 'ADMIN'`，否则返回 403。
-- `maintenanceMiddleware`：检查系统设置 `maintenance.enabled`，若启用则返回 503 维护模式响应。
+- `maintenanceMiddleware`：检查系统设置 `maintenanceMode`，若启用则返回 503 维护模式响应。
+- `requestLogMiddleware`：记录每个 HTTP 请求的方法、路径、状态码、响应时长、IP、用户信息。跳过静态文件和健康检查。4xx 用 warn，5xx 用 error。
+- `errorLogMiddleware`：全局错误捕获中间件，记录未捕获异常的 stack trace，放在所有路由之后。
 
 ## 7. 安全规则
 
@@ -184,7 +204,7 @@ navGroups、navCategories、navItems 均按名称使用 `localeCompare('zh')` �
 
 - 前端通过 RSA 公钥加密密码后传输（GET `/api/auth/public-key` 获取公钥）。
 - 后端使用 RSA 私钥解密后，再与 bcrypt 哈希比对。
-- RSA 密钥对由 `server/src/crypto.ts` 管理，支持管理员重新生成。
+- RSA 密钥对由 `server/src/crypto.ts` 管理，持久化存储在 `settings` 表（key='rsa_keys'），支持管理员重新生成。
 
 ### 7.2 登录安全
 
@@ -213,6 +233,24 @@ App.tsx 中定义三种路由守卫：
 - `AdminRoute`：仅 `role === 'ADMIN'` 可访问，否则重定向到登录页。
 - `PrivateRoute`：需登录（token 存在），未登录重定向到登录页。
 - `PublicOnly`：已登录用户不可访问（如登录/注册页），已登录重定向到首页。
+
+路由清单：
+
+| 路径 | 守卫 | 页面 |
+| --- | --- | --- |
+| `/` | 无 | Home |
+| `/login` | PublicOnly | Login |
+| `/register` | PublicOnly | Register |
+| `/forgot-password` | 无 | ForgotPassword |
+| `/reset-password` | 无 | ResetPassword |
+| `/profile` | PrivateRoute | Profile |
+| `/settings` | 无 | Settings |
+| `/my/nav` | PrivateRoute | MyNav |
+| `/admin/nav` | AdminRoute | NavMgr |
+| `/admin/users` | AdminRoute | UserMgr |
+| `/admin/system` | AdminRoute | SystemSettings |
+| `/admin/logs` | AdminRoute | Logs |
+| `*` | 无 | 重定向到 `/` |
 
 ### 8.3 首页逻辑
 
@@ -246,7 +284,7 @@ App.tsx 中定义三种路由守卫：
 - 首次启动若 `database.sqlite` 不存在，自动建表并执行 seed。
 - Seed 管理员：`admin` / `123456`（须提醒用户修改）。
 - Seed 公共数据：「搜索引擎」「开发工具」分组，含 Google、GitHub 等示例链接。
-- 首次启动生成 RSA 密钥对（存储在内存，重启后重新生成）。
+- 首次启动生成 RSA 密钥对（持久化存储在 `settings` 表 key='rsa_keys'）。
 
 ## 10. 系统设置
 
@@ -304,14 +342,60 @@ App.tsx 中定义三种路由守卫：
 
 - `GET /api/health` 返回 `{ status: 'ok', time: ... }`，用于部署监控。
 
-## 12. 代码质量要求
+## 12. 系统日志
+
+### 12.1 核心模块
+
+- 日志核心由 `server/src/logger.ts` 实现，无外部依赖（纯 Node.js `fs` + `EventEmitter`）。
+- 日志格式：单行 JSON `{"ts":"...","level":"info","msg":"...","meta":{...}}`。
+- 日志目录：`server/logs/`（可通过 `LOGS_PATH` 环境变量自定义）。
+
+### 12.2 文件轮转
+
+- 按天命名：`app-YYYY-MM-DD.log`。
+- 超过 `maxFileSize`（默认 10MB）自动轮转：`app-YYYY-MM-DD-1.log`、`-2.log`...
+- 超过 `retentionDays`（默认 30 天）自动清理。
+- 配置存储在 `settings` 表 key='log_config'，管理员可通过后台修改。
+
+### 12.3 实时日志流
+
+- 内存环形缓冲最近 500 条日志，SSE 新连接时先回放缓冲。
+- 通过 `EventEmitter` 实时推送新日志到已连接的 SSE 客户端。
+- 每 30 秒发送心跳防止连接超时。
+- 前端使用 `fetch + ReadableStream` 实现 SSE（支持 Authorization 头）。
+
+### 12.4 请求日志中间件
+
+- `requestLogMiddleware`：记录每个 HTTP 请求（方法、路径、状态码、时长、IP、用户）。
+- 跳过静态文件（`/uploads/`、`/logo.png`、`/favicon.ico`）和健康检查（`/api/health`、`/api/settings/version*`）。
+- `errorLogMiddleware`：全局错误捕获，放在所有路由之后。
+
+## 13. 数据备份与恢复
+
+### 13.1 导出
+
+- 接口：`POST /api/admin/backup/export`，需 Admin 鉴权。
+- 请求体：`{ password }`（至少 6 位，用于加密备份数据）。
+- 收集全量数据：users、navGroups、navCategories、navItems、navItemClicks、settings。
+- **排除** `rsa_keys`（私钥不导出）和 `passwordResets`（一次性令牌）。
+- 使用 PBKDF2 派生密钥 + AES 加密，打包为 ZIP 文件下载。
+- ZIP 工具由 `server/src/zip.ts` 实现，无外部依赖。
+
+### 13.2 导入
+
+- 接口：`POST /api/admin/backup/import`，需 Admin 鉴权。
+- 请求体：`{ password, zip }`（zip 为 base64 编码）。
+- 解压 ZIP → 读取 backup.json → 使用 password 解密 → 全量恢复数据。
+- **注意**：恢复后当前管理员账号将被替换为备份中的账号，需重新登录。
+
+## 14. 代码质量要求
 
 - 关键模块必须含详细注释：**SQLite 连接**、**JWT 验证逻辑**、**RSA 加解密**。
 - 后端使用 ES Modules，导入需带 `.js` 扩展名（TS 编译后兼容）。
 - 修改现有代码时遵循「外科手术式改动」，不重构无关代码。
 - 优先中文注释。
 
-## 13. 默认凭据（仅开发环境）
+## 15. 默认凭据（仅开发环境）
 
 - 管理员账号：`admin`
 - 管理员密码：`123456`
@@ -319,15 +403,15 @@ App.tsx 中定义三种路由守卫：
 
 ---
 
-## 14. 版本管理规范（强制）
+## 16. 版本管理规范（强制）
 
-### 14.1 单一来源
+### 16.1 单一来源
 
 - **版本信息唯一来源**：[server/src/version.ts](server/src/version.ts)
 - 任何版本号、发布日期、变更摘要的修改必须从此文件入手，禁止散落到其他位置
 - 前端通过 `GET /api/settings/version` 读取版本信息，禁止在前端硬编码版本号
 
-### 14.2 版本号规则
+### 16.2 版本号规则
 
 采用 [Semantic Versioning](https://semver.org/lang/zh-CN/)：`v<major>.<minor>.<patch>`
 
@@ -340,7 +424,7 @@ App.tsx 中定义三种路由守卫：
 - 版本号始终带 `v` 前缀（如 `v1.0.0`），与 GitHub Release tag 保持一致
 - 预发布版本可追加 `-alpha` / `-beta` / `-rc.1` 等后缀
 
-### 14.3 发布新版本必须执行的步骤
+### 16.3 发布新版本必须执行的步骤
 
 每次发布新版本时，**必须**按顺序完成以下三步，缺一不可：
 
@@ -360,7 +444,7 @@ App.tsx 中定义三种路由守卫：
    - Release 内容建议直接粘贴 CHANGELOG.md 中对应版本段落
    - 此 Release 将作为前端「检查更新」的对比基准
 
-### 14.4 版本对比机制
+### 16.4 版本对比机制
 
 - **本地版本**：来自 [server/src/version.ts](server/src/version.ts) 的 `VERSION`
 - **远端版本**：GitHub Releases 最新 tag_name（`https://api.github.com/repos/{owner}/{repo}/releases/latest`）
@@ -370,7 +454,7 @@ App.tsx 中定义三种路由守卫：
   - `GET /api/settings/version` 返回本地版本信息
   - `GET /api/settings/version/check` 对比 GitHub 最新版本，返回 `{ hasUpdate, isLatest, remote, local, message }`
 
-### 14.5 GitHub 仓库配置
+### 16.5 GitHub 仓库配置
 
 - 管理员在后台「系统设置 → GitHub 开源信息」中配置：
   - `githubEnabled`：是否在前端页脚显示 GitHub 入口与版本检查
@@ -378,7 +462,7 @@ App.tsx 中定义三种路由守卫：
 - 后端会自动从 `githubUrl` 解析出 `owner/repo`，拼接 GitHub API URL
 - 未启用或未配置时，前端不显示 GitHub 入口与版本检查按钮
 
-### 14.6 文件清单
+### 16.6 文件清单
 
 涉及版本管理的文件：
 
@@ -392,7 +476,7 @@ App.tsx 中定义三种路由守卫：
 | [client/src/pages/Admin/SystemSettings.tsx](client/src/pages/Admin/SystemSettings.tsx) | 后台 GitHub 配置入口 |
 | [.github/workflows/release.yml](.github/workflows/release.yml) | 推送 tag 时自动创建 GitHub Release |
 
-### 14.7 快速发版指令（Agent 必须遵守）
+### 16.7 快速发版指令（Agent 必须遵守）
 
 当用户对 Agent 说出以下任一指令时，Agent **必须**按本节流程自动执行完整的发版操作，**不得**仅执行其中部分步骤：
 
@@ -473,7 +557,7 @@ App.tsx 中定义三种路由守卫：
 - **禁止**使用 `git push --force` 推送 tag
 - 若 Git 工作区存在未提交的其他改动，应先提示用户处理或暂存，避免污染发版提交
 
-### 14.8 GitHub Release 自动化
+### 16.8 GitHub Release 自动化
 
 工作流文件：[.github/workflows/release.yml](.github/workflows/release.yml)
 
