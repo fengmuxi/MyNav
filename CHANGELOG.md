@@ -28,12 +28,42 @@
 ## [Unreleased]
 
 ### 新增
+
+### 变更
+
+### 修复
+
+### 移除
+
+---
+
+## [v1.1.0] - 2026-07-15
+
+### Git 提交记录
+- 54550d6 实现 SRP 安全认证协议
+- 07e58a4 更新agent.md内容
+- 864d49c 修复部署后环境不是https无法使用rsa加密的问题
+- 0ce12e8 添加日志系统
+- e9d63e0 修复docker-compose
+- 516c14f 修复docker镜像无法运行的bug
+- 71386fa 修改docker-compose
+- 040ee66 修复docker自动构建异常bug
+
+### 新增
+- 实现 SRP 安全认证协议，增强注册/登录安全性
+- 添加服务端日志系统
 - 补充 agent.md 日志系统、数据备份恢复、版本管理等章节
 - agent.md 新增第 15 节 CHANGELOG.md 持续维护规范（[Unreleased] 机制）
 
 ### 变更
 - 完善 agent.md 发版流程：双模块格式（Git 提交记录 + 变更明细）
 - CHANGELOG.md 改为 Keep a Changelog 规范，新增 [Unreleased] 未发布区域
+- 调整 docker-compose 配置
+
+### 修复
+- 修复部署后非 HTTPS 环境无法使用 RSA 加密的问题
+- 修复 Docker 镜像无法运行的 bug
+- 修复 Docker 自动构建异常 bug
 
 ---
 

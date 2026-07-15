@@ -15,13 +15,13 @@
  */
 
 /** 当前本地版本号（保持与 GitHub Release tag 一致，含 v 前缀） */
-export const VERSION = 'v1.0.0';
+export const VERSION = 'v1.1.0';
 
 /** 当前版本发布日期（ISO 字符串，仅日期部分） */
-export const RELEASE_DATE = '2026-07-14';
+export const RELEASE_DATE = '2026-07-15';
 
 /** 当前版本变更摘要（一句话简述，详细记录见 CHANGELOG.md） */
-export const CHANGELOG_SUMMARY = '初始版本：导航管理、用户系统、主题切换、Docker 部署、数据备份';
+export const CHANGELOG_SUMMARY = '新增 SRP 安全认证协议与日志系统，修复 Docker 部署问题';
 
 /** 版本信息对象（用于 API 响应） */
 export interface VersionInfo {
