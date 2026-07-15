@@ -101,10 +101,24 @@ export function getKeyPairInfo(): { publicKeyPem: string; createdAt: number } {
   return { publicKeyPem: kp.publicKeyPem, createdAt: kp.createdAt };
 }
 
-/** 使用私钥解密前端 RSA 加密的数据（如密码） */
-export function rsaDecrypt(encryptedBase64: string): string {
+/** 降级前缀：HTTP 非安全上下文下前端无法使用 crypto.subtle，回退为 base64 编码 */
+const B64_FALLBACK_PREFIX = 'B64:';
+
+/**
+ * 解密前端加密的密码
+ * - 无前缀：RSA-OAEP + SHA-256 解密（HTTPS 安全上下文）
+ * - "B64:" 前缀：直接 base64 解码（HTTP 降级，非安全上下文下 crypto.subtle 不可用）
+ */
+export function rsaDecrypt(encrypted: string): string {
+  // 降级模式：前端在 HTTP 环境下无法使用 Web Crypto API，回退为 base64 编码
+  if (encrypted.startsWith(B64_FALLBACK_PREFIX)) {
+    const b64 = encrypted.slice(B64_FALLBACK_PREFIX.length);
+    return Buffer.from(b64, 'base64').toString('utf8');
+  }
+
+  // 默认：RSA-OAEP + SHA-256 解密
   const kp = ensureKeyPair();
-  const buffer = Buffer.from(encryptedBase64, 'base64');
+  const buffer = Buffer.from(encrypted, 'base64');
   const decrypted = crypto.privateDecrypt(
     { key: kp.privateKeyPem, padding: RSA_PADDING, oaepHash: 'sha256' },
     buffer,

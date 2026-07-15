@@ -4,6 +4,12 @@
  * 使用浏览器原生 Web Crypto API 进行 RSA-OAEP + SHA-256 加密。
  * 公钥从后端 GET /api/auth/public-key 获取，缓存后复用。
  *
+ * 降级机制：
+ * - HTTPS / localhost：crypto.subtle 可用，使用 RSA-OAEP 加密（默认）
+ * - HTTP 非安全上下文：crypto.subtle 为 undefined，
+ *   回退为 base64 编码并添加 "B64:" 前缀，后端识别前缀后直接解码
+ *   （HTTP 环境下传输本身已无加密，此降级仅为保持接口兼容）
+ *
  * 用法：
  *   import { encryptPassword } from '../api/crypto';
  *   const encrypted = await encryptPassword(plainPassword);
@@ -13,6 +19,11 @@ import api from './axios';
 
 let publicKeyCache: string | null = null;
 let cryptoKeyCache: CryptoKey | null = null;
+
+/** 检测 Web Crypto API 是否可用（仅安全上下文可用） */
+function isSubtleAvailable(): boolean {
+  return typeof crypto !== 'undefined' && !!crypto.subtle;
+}
 
 /** 从后端获取 RSA 公钥（PEM 格式），带缓存 */
 async function fetchPublicKey(): Promise<string> {
@@ -64,9 +75,17 @@ async function importPublicKey(pem: string): Promise<CryptoKey> {
 
 /**
  * 加密明文密码，返回 base64 编码的密文
- * - 后端使用 RSA-OAEP + SHA-256 解密，与此对应
+ * - 安全上下文：使用 RSA-OAEP + SHA-256 加密，返回纯 base64 密文
+ * - 非安全上下文：回退为 base64 编码 + "B64:" 前缀，后端自动识别
  */
 export async function encryptPassword(plainText: string): Promise<string> {
+  // 降级：crypto.subtle 不可用（HTTP 非安全上下文）
+  if (!isSubtleAvailable()) {
+    console.warn('[Crypto] Web Crypto API 不可用（HTTP 环境），降级为 base64 编码');
+    const encoded = btoa(unescape(encodeURIComponent(plainText)));
+    return `B64:${encoded}`;
+  }
+
   try {
     const pem = await fetchPublicKey();
     const key = await importPublicKey(pem);
