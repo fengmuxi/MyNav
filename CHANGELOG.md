@@ -56,6 +56,7 @@
 - agent.md 新增第 15 节 CHANGELOG.md 持续维护规范（[Unreleased] 机制）
 
 ### 变更
+- 精简 agent.md：合并相近章节、压缩冗长描述，从 735 行精简至 207 行，保留全部强制约束（CHANGELOG 维护与发版流程）
 - 完善 agent.md 发版流程：双模块格式（Git 提交记录 + 变更明细）
 - CHANGELOG.md 改为 Keep a Changelog 规范，新增 [Unreleased] 未发布区域
 - 调整 docker-compose 配置
