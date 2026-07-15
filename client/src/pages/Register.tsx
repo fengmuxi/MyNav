@@ -4,7 +4,8 @@ import { Button } from '../components/ui/Button';
 import { OAuthIcon } from '../components/ui/OAuthIcon';
 import { useSettingsStore } from '../store/settingsStore';
 import api from '../api/axios';
-import { encryptPassword } from '../api/crypto';
+import { encryptPassword, isSecureContext, clearPublicKeyCache } from '../api/crypto';
+import { computeSrpVerifier } from '../api/srp';
 import { toast } from '../store/toastStore';
 import type { OAuthProviderId } from '../types/settings';
 
@@ -93,14 +94,47 @@ export default function Register() {
 
     setLoading(true);
     try {
-      const encryptedPassword = await encryptPassword(password);
-      await api.post('/auth/register', {
-        username: username.trim(),
-        password: encryptedPassword,
-        email: email.trim() || undefined,
-        role: 'USER',
-        ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
-      });
+      const trimmedUsername = username.trim();
+      // 根据安全上下文选择注册流程：
+      // - HTTPS：RSA 加密密码传输，后端同时计算 bcrypt + SRP verifier
+      // - HTTP：SRP 流程，客户端计算 verifier 后提交（密码不传输）
+      if (isSecureContext()) {
+        let encryptedPassword = await encryptPassword(password);
+        try {
+          await api.post('/auth/register', {
+            username: trimmedUsername,
+            password: encryptedPassword,
+            email: email.trim() || undefined,
+            role: 'USER',
+            ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
+          });
+        } catch (err: unknown) {
+          const axiosErr = err as { response?: { status?: number; data?: { error?: string } } };
+          // RSA 密钥可能已重新生成，旧公钥加密的数据无法被新私钥解密
+          if (axiosErr.response?.status === 400 && axiosErr.response?.data?.error?.includes('解密失败')) {
+            clearPublicKeyCache();
+            encryptedPassword = await encryptPassword(password);
+            await api.post('/auth/register', {
+              username: trimmedUsername,
+              password: encryptedPassword,
+              email: email.trim() || undefined,
+              role: 'USER',
+              ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
+            });
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        const { salt, verifier } = computeSrpVerifier(trimmedUsername, password);
+        await api.post('/auth/srp/register', {
+          username: trimmedUsername,
+          salt,
+          verifier,
+          email: email.trim() || undefined,
+          ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
+        });
+      }
       // 注册成功后跳转登录页
       toast.success('注册成功，即将跳转登录');
       navigate('/login');

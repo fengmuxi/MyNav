@@ -10,7 +10,10 @@ import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
 /**
  * users 用户表
  * - role: 角色枚举，'USER' 普通用户 / 'ADMIN' 管理员，默认 'USER'
- * - passwordHash: bcrypt 哈希后的密码（不存储明文）
+ * - passwordHash: bcrypt 哈希后的密码（不存储明文），用于 RSA(HTTPS) 登录
+ * - srpSalt: SRP-6a 盐（hex），用于 HTTP 环境下的安全登录（可空，老用户首次 HTTPS 登录后自动生成）
+ * - srpVerifier: SRP-6a 验证器 v=g^x mod N（hex），与 srpSalt 配对（可空）
+ *               verifier 非密码等价物，攻击者获取它无法直接登录
  * - theme: 用户自定义主题方案，存为 JSON 字符串（可空，空则用前端默认预设）
  *           结构：{ background, surfaceColor, accentColor, textColor, cardRadius, cardShadow, presetId }
  * - displayName: 昵称（可空），用于界面显示更友好的名称
@@ -24,6 +27,9 @@ export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   username: text('username').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
+  // SRP-6a 字段（HTTP 环境安全登录）：老用户为 NULL，HTTPS 首次登录后自动填充
+  srpSalt: text('srp_salt'),
+  srpVerifier: text('srp_verifier'),
   role: text('role').notNull().default('USER'),
   theme: text('theme'),
   displayName: text('display_name'),

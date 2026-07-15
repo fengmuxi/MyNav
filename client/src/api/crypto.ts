@@ -10,12 +10,27 @@
  *   回退为 base64 编码并添加 "B64:" 前缀，后端识别前缀后直接解码
  *   （HTTP 环境下传输本身已无加密，此降级仅为保持接口兼容）
  *
+ * 安全上下文判定（isSecureContext）：
+ * - HTTPS 或 localhost 时返回 true → 使用 RSA 加密流程
+ * - HTTP 局域网/IP 时返回 false → 应使用 SRP-6a 安全握手流程
+ *   （由 authStore / Register 根据 isSecureContext 自动选择）
+ *
  * 用法：
  *   import { encryptPassword } from '../api/crypto';
  *   const encrypted = await encryptPassword(plainPassword);
  *   await api.post('/auth/login', { username, password: encrypted });
  */
 import api from './axios';
+
+/**
+ * 判断当前是否为安全上下文（HTTPS / localhost）
+ * - true: crypto.subtle 可用，使用 RSA 加密
+ * - false: HTTP 非安全上下文，应使用 SRP-6a 握手（见 srp.ts）
+ */
+export function isSecureContext(): boolean {
+  // window.isSecureContext 是浏览器原生 API（HTTPS/localhost 为 true）
+  return typeof window !== 'undefined' && window.isSecureContext === true;
+}
 
 let publicKeyCache: string | null = null;
 let cryptoKeyCache: CryptoKey | null = null;

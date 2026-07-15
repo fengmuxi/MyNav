@@ -1,17 +1,43 @@
 # 更新日志 (CHANGELOG)
 
-本文件记录 MyNav 项目的所有版本变更。
+本文件记录 MyNav 项目的所有版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 规范。
 
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 规范：`v<major>.<minor>.<patch>`。
 
-每次发布新版本时，请同步执行以下三处更新：
-1. 在本文件顶部追加新版本变更记录
-2. 修改 `server/src/version.ts` 中的 `VERSION` / `RELEASE_DATE` / `CHANGELOG_SUMMARY`
-3. 在 GitHub 仓库发布对应的 Release（tag 与 `VERSION` 保持一致）
+## 维护规则
+
+### 日常开发（每次代码修改）
+
+每次代码修改完成后，**必须**同步更新下方 `[Unreleased]` 区域：
+1. 根据变更类型，在对应分类下追加一条记录
+2. 分类：`新增` / `变更` / `修复` / `移除`
+3. 记录格式：简洁明了的一句话描述，说明改了什么、为什么改
+
+### 发布新版本
+
+1. 收集**模块一**：`git log <上次tag>..HEAD --oneline` 获取提交记录
+2. 收集**模块二**：读取下方 `[Unreleased]` 区域的变更明细
+3. 将 `[Unreleased]` 标题改为 `[vX.Y.Z] - YYYY-MM-DD`
+4. 在版本标题下方依次写入两个模块：`### Git 提交记录`（模块一）和 `### 新增/变更/修复/移除`（模块二）
+5. 在其上方重新创建空的 `[Unreleased]` 区域
+6. 修改 `server/src/version.ts` 中的 `VERSION` / `RELEASE_DATE` / `CHANGELOG_SUMMARY`
+7. 提交并推送 Git tag，GitHub Actions 自动创建 Release（正文从此文件提取）
 
 ---
 
-## [v1.0.0] — 2026-07-14
+## [Unreleased]
+
+### 新增
+- 补充 agent.md 日志系统、数据备份恢复、版本管理等章节
+- agent.md 新增第 15 节 CHANGELOG.md 持续维护规范（[Unreleased] 机制）
+
+### 变更
+- 完善 agent.md 发版流程：双模块格式（Git 提交记录 + 变更明细）
+- CHANGELOG.md 改为 Keep a Changelog 规范，新增 [Unreleased] 未发布区域
+
+---
+
+## [v1.0.0] - 2026-07-14
 
 ### 新增
 - 个人导航主页：分组、分类、卡片三级结构，支持公共/私有数据隔离

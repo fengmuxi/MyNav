@@ -13,7 +13,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '../types';
 import api from '../api/axios';
-import { encryptPassword } from '../api/crypto';
+import { encryptPassword, isSecureContext, clearPublicKeyCache } from '../api/crypto';
+import { srpLogin } from '../api/srp';
 import { useThemeStore } from './themeStore';
 
 interface AuthState {
@@ -37,17 +38,51 @@ export const useAuthStore = create<AuthState>()(
       hasHydrated: false,
 
       // 调用登录接口并保存 token/user
-      // 密码经 RSA 加密后传输，登录成功后立即拉取用户主题方案
+      // 根据安全上下文自动选择认证方案：
+      // - HTTPS（安全上下文）：RSA 加密密码传输，后端解密后比对 bcrypt
+      // - HTTP（非安全上下文）：SRP-6a 握手，密码永不离开客户端
+      // 登录成功后立即拉取用户主题方案
       login: async (username, password) => {
-        console.log('[AuthStore] 加密密码...');
-        const encryptedPassword = await encryptPassword(password);
-        console.log('[AuthStore] 发送登录请求...');
-        const { data } = await api.post('/auth/login', { username, password: encryptedPassword });
-        console.log('[AuthStore] 登录请求成功，token:', data.token ? '存在' : '缺失');
-        if (!data.token || !data.user) {
-          throw new Error('登录响应不完整');
+        let token: string;
+        let user: User;
+
+        if (isSecureContext()) {
+          // ===== HTTPS：RSA 加密流程 =====
+          console.log('[AuthStore] 安全上下文，使用 RSA 加密登录');
+          let encryptedPassword = await encryptPassword(password);
+          let loginResp;
+          try {
+            loginResp = await api.post('/auth/login', {
+              username,
+              password: encryptedPassword,
+            });
+          } catch (err: unknown) {
+            const axiosErr = err as { response?: { status?: number; data?: { error?: string } } };
+            // RSA 密钥可能已重新生成（管理员操作），旧公钥加密的密文无法被新私钥解密
+            if (axiosErr.response?.status === 400 && axiosErr.response?.data?.error?.includes('解密失败')) {
+              console.log('[AuthStore] RSA 解密失败，推测密钥已更新，清除缓存并重试');
+              clearPublicKeyCache();
+              encryptedPassword = await encryptPassword(password);
+              loginResp = await api.post('/auth/login', {
+                username,
+                password: encryptedPassword,
+              });
+            } else {
+              throw err;
+            }
+          }
+          if (!loginResp.data.token || !loginResp.data.user) throw new Error('登录响应不完整');
+          token = loginResp.data.token;
+          user = loginResp.data.user;
+        } else {
+          // ===== HTTP：SRP-6a 握手流程 =====
+          console.log('[AuthStore] 非安全上下文，使用 SRP-6a 握手登录');
+          const result = await srpLogin(username, password);
+          token = result.token;
+          user = result.user as User;
         }
-        set({ token: data.token, user: data.user });
+
+        set({ token, user });
         await useThemeStore.getState().fetchRemote();
       },
 

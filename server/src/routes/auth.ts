@@ -16,6 +16,12 @@ import { signToken } from '../middleware/authMiddleware.js';
 import { readSettings } from '../settings.js';
 import { sendPasswordResetEmail } from '../mailer.js';
 import { rsaDecrypt, getPublicKeyPem } from '../crypto.js';
+import {
+  computeVerifier,
+  serverStep1,
+  serverStep2,
+  clearSrpSession,
+} from '../srp.js';
 
 export const authRouter = Router();
 
@@ -93,6 +99,8 @@ authRouter.post('/register', (req, res) => {
 
   // bcrypt 哈希密码，saltRounds=10
   const passwordHash = bcrypt.hashSync(password, 10);
+  // 同时计算 SRP verifier（用于 HTTP 环境下的 SRP 登录）
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier(username, password);
 
   // 角色处理：普通注册固定为 USER，仅管理员可创建 ADMIN（此处公开接口不允许）
   const finalRole = role === 'ADMIN' && cfg.defaultRole === 'ADMIN' ? 'ADMIN' : 'USER';
@@ -102,6 +110,8 @@ authRouter.post('/register', (req, res) => {
     .values({
       username,
       passwordHash,
+      srpSalt,
+      srpVerifier,
       role: finalRole,
       displayName: displayName || null,
       email: email || null,
@@ -204,12 +214,20 @@ authRouter.post('/login', (req, res) => {
     return;
   }
 
-  // 登录成功：重置失败计数与锁定时间
-  if (user.failedLoginAttempts || user.lockedUntil) {
-    db.update(users)
-      .set({ failedLoginAttempts: 0, lockedUntil: 0 })
-      .where(eq(users.id, user.id))
-      .run();
+  // 登录成功：重置失败计数与锁定时间；若无 SRP verifier 则自动计算并存储（老用户兼容升级）
+  const srpUpgradeNeeded = !user.srpSalt || !user.srpVerifier;
+  if (user.failedLoginAttempts || user.lockedUntil || srpUpgradeNeeded) {
+    const patch: { failedLoginAttempts?: number; lockedUntil?: number; srpSalt?: string; srpVerifier?: string } = {};
+    if (user.failedLoginAttempts || user.lockedUntil) {
+      patch.failedLoginAttempts = 0;
+      patch.lockedUntil = 0;
+    }
+    if (srpUpgradeNeeded) {
+      const { salt, verifier } = computeVerifier(user.username, password);
+      patch.srpSalt = salt;
+      patch.srpVerifier = verifier;
+    }
+    db.update(users).set(patch).where(eq(users.id, user.id)).run();
   }
 
   // 签发 JWT
@@ -371,9 +389,13 @@ authRouter.post('/reset-password', (req, res) => {
     return;
   }
 
-  // 更新密码
+  // 更新密码（bcrypt + SRP verifier 同步更新）
   const passwordHash = bcrypt.hashSync(newPassword, 10);
-  db.update(users).set({ passwordHash }).where(eq(users.id, user.id)).run();
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier(user.username, newPassword);
+  db.update(users)
+    .set({ passwordHash, srpSalt, srpVerifier })
+    .where(eq(users.id, user.id))
+    .run();
 
   // 标记令牌为已使用（一次性）
   db.update(passwordResets)
@@ -382,4 +404,268 @@ authRouter.post('/reset-password', (req, res) => {
     .run();
 
   res.json({ ok: true, message: '密码已重置，请使用新密码登录' });
+});
+
+/* ======================================================================
+ *  SRP-6a 路由（HTTP 非安全上下文下的安全认证）
+ * ------------------------------------------------------------------
+ * - POST /api/auth/srp/register      SRP 注册（客户端发送 salt + verifier）
+ * - POST /api/auth/srp/login/init    握手步骤1：客户端发送 { username, A } → { salt, B }
+ * - POST /api/auth/srp/login/verify  握手步骤2：客户端发送 { username, A, B, M1 } → { token, user, M2 }
+ *
+ * 设计说明：
+ * - SRP 注册时不传输明文密码，仅传输客户端计算的 verifier
+ * - 因无明文密码，passwordHash 存放占位哈希，该账户仅支持 SRP 登录
+ * - 若用户后续在 HTTPS 环境重置密码，将自动获得 bcrypt hash，两种方式均可登录
+ * ====================================================================== */
+
+/** 占位 bcrypt 哈希：SRP 注册账户无明文密码，RSA 登录会因此哈希不匹配而拒绝 */
+const SRP_ONLY_PLACEHOLDER_HASH = bcrypt.hashSync('__SRP_ONLY_ACCOUNT__', 10);
+
+/**
+ * POST /api/auth/srp/register
+ * SRP 注册接口：客户端计算 verifier 后提交
+ * body: { username, salt, verifier, displayName?, email?, bio?, inviteCode? }
+ */
+authRouter.post('/srp/register', (req, res) => {
+  const cfg = readSettings();
+  if (!cfg.allowRegister || cfg.registerMethod === 'closed') {
+    res.status(403).json({ error: '当前已关闭注册，请联系管理员创建账户' });
+    return;
+  }
+
+  const {
+    username,
+    salt,
+    verifier,
+    displayName,
+    email,
+    bio,
+    inviteCode,
+  } = req.body ?? {};
+
+  // 校验 SRP 参数
+  if (!username || !salt || !verifier) {
+    res.status(400).json({ error: '用户名、salt、verifier 不能为空' });
+    return;
+  }
+  // salt 和 verifier 必须是合法十六进制
+  if (!/^[0-9a-fA-F]+$/.test(salt) || !/^[0-9a-fA-F]+$/.test(verifier)) {
+    res.status(400).json({ error: 'SRP 参数格式无效' });
+    return;
+  }
+
+  // 邀请码校验
+  if (cfg.registerMethod === 'invite') {
+    if (!inviteCode || inviteCode !== cfg.inviteCode) {
+      res.status(400).json({ error: '邀请码无效' });
+      return;
+    }
+  }
+
+  // 用户名查重
+  const exists = db.select().from(users).where(eq(users.username, username)).get();
+  if (exists) {
+    res.status(409).json({ error: '用户名已存在' });
+    return;
+  }
+
+  // 邮箱校验
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: '邮箱格式无效' });
+    return;
+  }
+
+  const finalRole = 'USER';
+
+  const created = db
+    .insert(users)
+    .values({
+      username,
+      // SRP 注册无明文密码，存占位哈希；该账户仅支持 SRP 登录
+      passwordHash: SRP_ONLY_PLACEHOLDER_HASH,
+      srpSalt: salt,
+      srpVerifier: verifier,
+      role: finalRole,
+      displayName: displayName || null,
+      email: email || null,
+      bio: bio || null,
+    })
+    .returning()
+    .get();
+
+  res.status(201).json({
+    user: {
+      id: created.id,
+      username: created.username,
+      role: created.role,
+      displayName: created.displayName,
+      email: created.email,
+      bio: created.bio,
+      avatar: created.avatar,
+      status: created.status,
+    },
+  });
+});
+
+/**
+ * POST /api/auth/srp/login/init
+ * SRP 握手步骤1：客户端发起登录，提交 username 和 A，服务端返回 salt 和 B
+ * body: { username, A }
+ * 返回: { salt, B }
+ */
+authRouter.post('/srp/login/init', (req, res) => {
+  const { username, A } = req.body ?? {};
+  if (!username || !A) {
+    res.status(400).json({ error: '用户名和 A 不能为空' });
+    return;
+  }
+
+  const user = db.select().from(users).where(eq(users.username, username)).get();
+
+  // 用户不存在：返回模糊错误，避免枚举
+  if (!user) {
+    res.status(401).json({ error: '用户名或密码错误' });
+    return;
+  }
+
+  // 账户锁定检查
+  if (user.lockedUntil && user.lockedUntil > Date.now()) {
+    const remainingMin = Math.ceil((user.lockedUntil - Date.now()) / 60000);
+    res.status(423).json({ error: `账户已锁定，请 ${remainingMin} 分钟后重试` });
+    return;
+  }
+
+  // SRP verifier 未配置：提示用户先在 HTTPS 环境登录一次
+  if (!user.srpSalt || !user.srpVerifier) {
+    res.status(403).json({
+      error: '该账户尚未启用 SRP 登录，请先通过 HTTPS（安全连接）登录一次以自动激活',
+    });
+    return;
+  }
+
+  let aBig: bigint;
+  try {
+    aBig = BigInt('0x' + A);
+  } catch {
+    res.status(400).json({ error: '参数 A 格式无效' });
+    return;
+  }
+
+  // A 必须非零（防绕过）
+  if (aBig === 0n) {
+    res.status(400).json({ error: '参数 A 无效' });
+    return;
+  }
+
+  const { salt, B } = serverStep1(
+    user.username,
+    user.id,
+    user.srpSalt,
+    user.srpVerifier,
+    aBig,
+  );
+
+  res.json({ salt, B });
+});
+
+/**
+ * POST /api/auth/srp/login/verify
+ * SRP 握手步骤2：客户端提交 M1，服务端验证后签发 JWT
+ * body: { username, A, B, M1 }
+ * 返回: { token, user, M2 }
+ */
+authRouter.post('/srp/login/verify', (req, res) => {
+  const { username, A, B, M1 } = req.body ?? {};
+  if (!username || !A || !B || !M1) {
+    res.status(400).json({ error: '参数不完整' });
+    return;
+  }
+
+  const cfg = readSettings();
+  const user = db.select().from(users).where(eq(users.username, username)).get();
+  if (!user) {
+    res.status(401).json({ error: '用户名或密码错误' });
+    return;
+  }
+
+  // 账户锁定检查
+  if (user.lockedUntil && user.lockedUntil > Date.now()) {
+    const remainingMin = Math.ceil((user.lockedUntil - Date.now()) / 60000);
+    res.status(423).json({ error: `账户已锁定，请 ${remainingMin} 分钟后重试` });
+    return;
+  }
+
+  let aBig: bigint, bBig: bigint;
+  try {
+    aBig = BigInt('0x' + A);
+    bBig = BigInt('0x' + B);
+  } catch {
+    res.status(400).json({ error: '参数格式无效' });
+    return;
+  }
+
+  const result = serverStep2(user.username, aBig, bBig, String(M1));
+
+  if (!result.valid) {
+    // 验证失败：累加失败次数
+    const attempts = (user.failedLoginAttempts || 0) + 1;
+    const maxAttempts = cfg.maxLoginAttempts > 0 ? cfg.maxLoginAttempts : 5;
+
+    if (attempts >= maxAttempts) {
+      const lockMs = (cfg.lockMinutes > 0 ? cfg.lockMinutes : 30) * 60 * 1000;
+      db.update(users)
+        .set({ failedLoginAttempts: 0, lockedUntil: Date.now() + lockMs })
+        .where(eq(users.id, user.id))
+        .run();
+      const lockMin = cfg.lockMinutes > 0 ? cfg.lockMinutes : 30;
+      res.status(423).json({ error: `密码错误次数过多，账户已锁定 ${lockMin} 分钟` });
+    } else {
+      db.update(users)
+        .set({ failedLoginAttempts: attempts })
+        .where(eq(users.id, user.id))
+        .run();
+      const remaining = maxAttempts - attempts;
+      res.status(401).json({
+        error: `用户名或密码错误（剩余 ${remaining} 次尝试机会）`,
+      });
+    }
+    return;
+  }
+
+  // 账号状态检查
+  if (user.status !== 'active') {
+    clearSrpSession(user.username);
+    res.status(403).json({ error: '账户已被禁用，请联系管理员' });
+    return;
+  }
+
+  // 登录成功：重置失败计数
+  if (user.failedLoginAttempts || user.lockedUntil) {
+    db.update(users)
+      .set({ failedLoginAttempts: 0, lockedUntil: 0 })
+      .where(eq(users.id, user.id))
+      .run();
+  }
+
+  const token = signToken({
+    id: user.id,
+    username: user.username,
+    role: user.role as 'USER' | 'ADMIN',
+  });
+
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      displayName: user.displayName,
+      email: user.email,
+      bio: user.bio,
+      avatar: user.avatar,
+      status: user.status,
+    },
+    M2: result.M2,
+  });
 });

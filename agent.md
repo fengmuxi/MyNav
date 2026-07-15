@@ -395,7 +395,88 @@ App.tsx 中定义三种路由守卫：
 - 修改现有代码时遵循「外科手术式改动」，不重构无关代码。
 - 优先中文注释。
 
-## 15. 默认凭据（仅开发环境）
+## 15. CHANGELOG.md 持续维护规范（强制）
+
+> 本项目采用 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 规范，CHANGELOG.md 是 GitHub Release 正文的唯一数据来源。为保证发版时变更信息完整准确，**每次代码修改必须同步更新 CHANGELOG.md**。
+
+### 15.1 [Unreleased] 区域
+
+CHANGELOG.md 顶部「---」分隔线之后维护一个 `[Unreleased]`（未发布）区域，用于累积日常开发中的所有变更：
+
+```markdown
+## [Unreleased]
+
+### 新增
+- xxx 功能
+
+### 变更
+- xxx 逻辑调整
+
+### 修复
+- xxx 问题修复
+
+### 移除
+- 移除 xxx
+```
+
+### 15.2 每次代码修改的记录义务
+
+Agent 完成任何代码修改后，**必须**同步在 `[Unreleased]` 对应分类下追加一条记录：
+
+| 变更类型 | 对应分类 | 判定标准 |
+| --- | --- | --- |
+| 新增功能、新增接口、新增字段、新增页面 | `### 新增` | 之前不存在的代码 |
+| 修改逻辑、重构、优化、配置调整 | `### 变更` | 修改已有代码的行为 |
+| 修复 bug、修复异常、修复 UI 缺陷 | `### 修复` | 修复错误行为 |
+| 删除功能、删除接口、删除字段 | `### 移除` | 移除已有代码 |
+
+记录要求：
+- 一条变更对应一条记录，以 `- ` 开头
+- 简洁明了，说明**改了什么**（必要时说明**为什么改**）
+- 示例：`- 修复登录失败锁定后无法自动解锁的问题`
+- 若某分类无内容则整段省略，不留空标题
+
+### 15.3 发版时的两模块格式
+
+发布新版本时，`[Unreleased]` 区域转换为正式版本段落，最终版本段落包含**两个模块**：
+
+```markdown
+## [vX.Y.Z] - YYYY-MM-DD
+
+### Git 提交记录
+- abc1234 修复登录锁定逻辑
+- def5678 优化首页加载性能
+- ...
+
+### 新增
+- xxx 功能
+
+### 变更
+- xxx 逻辑调整
+
+### 修复
+- xxx 问题修复
+
+### 移除
+- 移除 xxx
+```
+
+| 模块 | 内容 | 来源 |
+| --- | --- | --- |
+| 模块一：Git 提交记录 | 自上次发版 tag 以来的所有 commit 哈希与提交信息 | `git log <上次tag>..HEAD --oneline` |
+| 模块二：变更明细 | 新增 / 变更 / 修复 / 移除 分类下的具体变更步骤 | `[Unreleased]` 区域日常维护的内容 |
+
+两个模块合并写入版本段落后，在其上方重新创建空的 `[Unreleased]` 区域（详见第 17 节发版流程）。
+
+### 15.4 约束
+
+- **禁止**在完成代码修改后跳过 CHANGELOG.md 更新
+- **禁止**将多条不相关的变更合并为一条记录
+- **禁止**在 `[Unreleased]` 区域使用版本号标题（必须保持 `## [Unreleased]`）
+- **禁止**删除已发布版本的历史记录
+- 若一次修改涉及多个分类，应在每个相关分类下分别追加记录
+
+## 16. 默认凭据（仅开发环境）
 
 - 管理员账号：`admin`
 - 管理员密码：`123456`
@@ -403,15 +484,15 @@ App.tsx 中定义三种路由守卫：
 
 ---
 
-## 16. 版本管理规范（强制）
+## 17. 版本管理规范（强制）
 
-### 16.1 单一来源
+### 17.1 单一来源
 
 - **版本信息唯一来源**：[server/src/version.ts](server/src/version.ts)
 - 任何版本号、发布日期、变更摘要的修改必须从此文件入手，禁止散落到其他位置
 - 前端通过 `GET /api/settings/version` 读取版本信息，禁止在前端硬编码版本号
 
-### 16.2 版本号规则
+### 17.2 版本号规则
 
 采用 [Semantic Versioning](https://semver.org/lang/zh-CN/)：`v<major>.<minor>.<patch>`
 
@@ -424,27 +505,36 @@ App.tsx 中定义三种路由守卫：
 - 版本号始终带 `v` 前缀（如 `v1.0.0`），与 GitHub Release tag 保持一致
 - 预发布版本可追加 `-alpha` / `-beta` / `-rc.1` 等后缀
 
-### 16.3 发布新版本必须执行的步骤
+### 17.3 发布新版本必须执行的步骤
 
 每次发布新版本时，**必须**按顺序完成以下三步，缺一不可：
 
-1. **更新 [server/src/version.ts](server/src/version.ts)**
+1. **更新 [CHANGELOG.md](CHANGELOG.md)**（合并两模块为正式版本段落）
+   - 收集**模块一**：执行 `git log <上次tag>..HEAD --oneline` 获取自上次发版以来的所有提交记录
+   - 收集**模块二**：读取 `[Unreleased]` 区域中的变更明细（新增/变更/修复/移除）
+   - 将 `## [Unreleased]` 标题改为 `## [vX.Y.Z] - YYYY-MM-DD`
+   - 在版本标题下方依次写入两个模块：
+     - `### Git 提交记录`（模块一，每行格式：`- <短哈希> <提交信息>`）
+     - `### 新增` / `### 变更` / `### 修复` / `### 移除`（模块二，来自 `[Unreleased]`）
+   - 在版本段落上方重新创建空的 `## [Unreleased]` 区域（保留分类标题骨架）
+   - 版本段标题格式**必须**严格为：`## [vX.Y.Z] - YYYY-MM-DD`
+   - **格式与 release.yml 提取规则的对应关系**：
+     - release.yml 使用 awk 匹配 `^## \[<tag>\]` 定位版本段开始
+     - 匹配到下一个 `^## \[` 时结束提取（两个模块均在提取范围内）
+     - 若标题格式不匹配（如缺少方括号、缺少 v 前缀、缺少日期），Release 正文将为默认提示
+   - 格式自检正则：`^## \[v\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$`
+
+2. **更新 [server/src/version.ts](server/src/version.ts)**
    - 修改 `VERSION` 为新版本号（含 `v` 前缀）
    - 修改 `RELEASE_DATE` 为发布日期（ISO 日期格式 `YYYY-MM-DD`）
-   - 修改 `CHANGELOG_SUMMARY` 为一句话摘要
-
-2. **更新 [CHANGELOG.md](CHANGELOG.md)**
-   - 在文件顶部追加新版本段落：`## [vX.Y.Z] — YYYY-MM-DD`
-   - 按 `新增` / `变更` / `修复` / `移除` 等分类列出本次变更
-   - 详细记录数据库 schema 变更、API 变更、配置变更
+   - 修改 `CHANGELOG_SUMMARY` 为一句话摘要（基于 `[Unreleased]` 内容概括）
 
 3. **发布 GitHub Release**
-   - 在 GitHub 仓库创建新 Release，tag 必须与 `VERSION` 完全一致
-   - Release 标题建议为 `vX.Y.Z - <一句话摘要>`
-   - Release 内容建议直接粘贴 CHANGELOG.md 中对应版本段落
+   - 推送 Git tag，由 [.github/workflows/release.yml](.github/workflows/release.yml) 自动创建 Release
+   - Release 正文自动从 CHANGELOG.md 提取对应版本段落（含两个模块）
    - 此 Release 将作为前端「检查更新」的对比基准
 
-### 16.4 版本对比机制
+### 17.4 版本对比机制
 
 - **本地版本**：来自 [server/src/version.ts](server/src/version.ts) 的 `VERSION`
 - **远端版本**：GitHub Releases 最新 tag_name（`https://api.github.com/repos/{owner}/{repo}/releases/latest`）
@@ -454,7 +544,7 @@ App.tsx 中定义三种路由守卫：
   - `GET /api/settings/version` 返回本地版本信息
   - `GET /api/settings/version/check` 对比 GitHub 最新版本，返回 `{ hasUpdate, isLatest, remote, local, message }`
 
-### 16.5 GitHub 仓库配置
+### 17.5 GitHub 仓库配置
 
 - 管理员在后台「系统设置 → GitHub 开源信息」中配置：
   - `githubEnabled`：是否在前端页脚显示 GitHub 入口与版本检查
@@ -462,21 +552,21 @@ App.tsx 中定义三种路由守卫：
 - 后端会自动从 `githubUrl` 解析出 `owner/repo`，拼接 GitHub API URL
 - 未启用或未配置时，前端不显示 GitHub 入口与版本检查按钮
 
-### 16.6 文件清单
+### 17.6 文件清单
 
 涉及版本管理的文件：
 
 | 文件 | 作用 |
 | --- | --- |
 | [server/src/version.ts](server/src/version.ts) | 版本信息单一来源（VERSION / RELEASE_DATE / CHANGELOG_SUMMARY） |
-| [CHANGELOG.md](CHANGELOG.md) | 详细变更日志，每次发版必须追加 |
+| [CHANGELOG.md](CHANGELOG.md) | 变更日志，含 `[Unreleased]` 未发布区域，每次代码修改必须更新，发版时转为正式版本 |
 | [server/src/routes/settings.ts](server/src/routes/settings.ts) | 版本检查接口（GitHub API 代理 + 缓存 + semver 对比） |
 | [client/src/store/settingsStore.ts](client/src/store/settingsStore.ts) | 前端版本状态管理 |
 | [client/src/pages/Home.tsx](client/src/pages/Home.tsx) | 页脚显示版本号 + GitHub 链接 + 更新提示 |
 | [client/src/pages/Admin/SystemSettings.tsx](client/src/pages/Admin/SystemSettings.tsx) | 后台 GitHub 配置入口 |
 | [.github/workflows/release.yml](.github/workflows/release.yml) | 推送 tag 时自动创建 GitHub Release |
 
-### 16.7 快速发版指令（Agent 必须遵守）
+### 17.7 快速发版指令（Agent 必须遵守）
 
 当用户对 Agent 说出以下任一指令时，Agent **必须**按本节流程自动执行完整的发版操作，**不得**仅执行其中部分步骤：
 
@@ -486,46 +576,88 @@ App.tsx 中定义三种路由守卫：
 - 「打 tag」
 - 「release vX.Y.Z」（指定具体版本号）
 
+#### 变更信息收集（前置必执行）
+
+Agent 在确定版本号之前，**必须**同时收集两个模块的变更信息：
+
+**模块一：Git 提交记录**
+1. 读取 `server/src/version.ts` 中的 `VERSION` 作为上次版本号（如 `v1.0.0`）
+2. 执行 `git log <上次版本号>..HEAD --oneline --no-decorate` 获取自上次发版以来的所有提交
+   - 上次版本的 tag 存在时：`git log v1.0.0..HEAD --oneline --no-decorate`
+   - 无任何 tag 时：`git log --oneline --no-decorate`（取全部历史）
+   - 每条记录格式为 `<短哈希> <提交信息>`，需转换为 `- <短哈希> <提交信息>` 写入 CHANGELOG
+
+**模块二：变更明细**
+1. 读取 CHANGELOG.md，定位 `## [Unreleased]` 标题
+2. 提取其下所有分类（新增/变更/修复/移除）的记录
+
+**汇总与确认**
+1. 若 `[Unreleased]` 区域为空且 git log 也无新提交，应停止并提示用户「无任何变更，无需发版」
+2. 基于模块二的记录生成一句话摘要（不超过 30 字）
+3. 将两个模块的内容和摘要展示给用户，请求确认或修改：
+   - 用户确认 -> 直接使用
+   - 用户修改 -> 以用户修改后的内容为准，并同步更新 CHANGELOG.md 的 `[Unreleased]` 区域
+
 #### 触发条件判定
 
-1. 若用户在指令中指定了版本号（如「提交 tag v1.0.1」），则以指定版本号为准
-2. 若用户未指定版本号，则 Agent 必须询问用户本次属于哪一类变更：
-   - **major**：不兼容的 API 变更 → 递增 major 位（v1.0.0 → v2.0.0）
-   - **minor**：新增功能 → 递增 minor 位（v1.0.0 → v1.1.0）
-   - **patch**：修复缺陷 → 递增 patch 位（v1.0.0 → v1.0.1）
-3. 询问用户本次变更的简短摘要（一句话）和详细变更列表（新增/变更/修复/移除）
+1. Agent 先执行「变更信息收集」，获取两个模块内容并经用户确认
+2. 若用户在指令中指定了版本号（如「提交 tag v1.0.1」），则以指定版本号为准
+3. 若用户未指定版本号，Agent 基于变更信息**建议**版本号类型，由用户确认：
+   - 含「移除」分类或重大「变更」-> 建议 **major**（v1.0.0 -> v2.0.0）
+   - 含「新增」分类 -> 建议 **minor**（v1.0.0 -> v1.1.0）
+   - 仅含「修复」 -> 建议 **patch**（v1.0.0 -> v1.0.1）
 
 #### 执行流程（严格按顺序，任一步骤失败立即停止并报告）
 
 ```
-步骤 1：读取当前版本号
+步骤 0：收集变更信息（前置）
+  - 模块一：执行 git log <上次版本号>..HEAD --oneline --no-decorate 获取提交记录
+  - 模块二：读取 CHANGELOG.md 中的 [Unreleased] 区域，提取分类记录
+  - 生成一句话摘要
+  - 展示两个模块内容给用户确认或修改
+  - 验证：若 [Unreleased] 为空且 git log 无输出，停止并提示「无变更」
+
+步骤 1：确定版本号
   - 读取 server/src/version.ts 中的 VERSION 常量
   - 解析出当前 major.minor.patch
-  - 计算出新版本号 newVersion（含 v 前缀）
+  - 基于变更信息建议版本号类型，用户确认后计算 newVersion（含 v 前缀）
 
-步骤 2：更新 server/src/version.ts
-  - 将 VERSION 改为 newVersion
-  - 将 RELEASE_DATE 改为当天日期（YYYY-MM-DD，时区 Asia/Shanghai）
-  - 将 CHANGELOG_SUMMARY 改为用户提供的一句话摘要
+步骤 2：更新 CHANGELOG.md（合并两模块为正式版本段落）
+  - 将 ## [Unreleased] 标题改为 ## [vX.Y.Z] - YYYY-MM-DD
+  - 在版本标题下方依次写入两个模块：
+    模块一（### Git 提交记录）：
+      ### Git 提交记录
+      - abc1234 修复登录锁定逻辑
+      - def5678 优化首页加载性能
+      - ...
+    模块二（### 新增/变更/修复/移除，来自 [Unreleased]）：
+      ### 新增
+      - xxx
 
-步骤 3：更新 CHANGELOG.md
-  - 在文件顶部「---」分隔线之后、上一个版本段落之前插入新版本段落
-  - 段落格式：
-    ## [vX.Y.Z] — YYYY-MM-DD
+      ### 修复
+      - xxx
+  - 在版本段落上方重新创建空的 ## [Unreleased] 区域（保留分类标题骨架）：
+    ## [Unreleased]
 
     ### 新增
-    - xxx
 
     ### 变更
-    - xxx
 
     ### 修复
-    - xxx
 
     ### 移除
-    - xxx
-  - 若某分类无内容则整段省略，不要留空标题
-  - 内容来自用户提供的详细变更列表
+  - 格式自检（必须通过，否则 release.yml 无法提取正文）：
+    1. 新版本标题行必须严格匹配正则：^## \[v\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$
+    2. 方括号内版本号必须与 newVersion 完全一致（含 v 前缀）
+    3. 日期必须与 RELEASE_DATE 一致
+    4. 标题行前后各保留一个空行
+    5. 新的 [Unreleased] 标题必须为 ## [Unreleased]（不含版本号）
+    6. 模块一标题必须为 ### Git 提交记录，每行格式：- <短哈希> <提交信息>
+
+步骤 3：更新 server/src/version.ts
+  - 将 VERSION 改为 newVersion
+  - 将 RELEASE_DATE 改为当天日期（YYYY-MM-DD，时区 Asia/Shanghai）
+  - 将 CHANGELOG_SUMMARY 改为经用户确认的一句话摘要
 
 步骤 4：Git 提交
   - git add server/src/version.ts CHANGELOG.md
@@ -543,21 +675,26 @@ App.tsx 中定义三种路由守卫：
     ✓ 版本号：vX.Y.Z
     ✓ 发布日期：YYYY-MM-DD
     ✓ Git Tag：已推送
-    ✓ GitHub Release：将由 .github/workflows/release.yml 自动创建
+    ✓ GitHub Release：将由 .github/workflows/release.yml 自动创建（正文含两个模块）
     ✓ Docker 镜像：Release 发布后将由 .github/workflows/docker-build.yml 自动构建
   - 提醒用户可在 GitHub 仓库 Actions 页面查看构建进度
 ```
 
 #### 约束
 
-- **禁止**跳过步骤 2 或 3（version.ts 和 CHANGELOG.md 必须同步更新）
+- **禁止**跳过步骤 0（必须同时收集 Git 提交记录和 [Unreleased] 变更明细）
+- **禁止**跳过步骤 2 或 3（CHANGELOG.md 和 version.ts 必须同步更新）
+- **禁止**在版本段落中遗漏模块一（Git 提交记录）或模块二（变更明细）
 - **禁止**在未征得用户同意的情况下递增 major 位（major 变更需明确确认）
 - **禁止**修改版本号格式（必须 `v` 前缀 + 三段数字）
 - **禁止**将本次发版的变更内容混入上一版本的段落中
 - **禁止**使用 `git push --force` 推送 tag
+- **禁止**在 CHANGELOG.md 版本标题中使用不规范的格式（如 `## v1.0.1` 或 `## [1.0.1]`），必须为 `## [v1.0.1] - YYYY-MM-DD`
+- **禁止**发版后遗漏创建新的空 `[Unreleased]` 区域
 - 若 Git 工作区存在未提交的其他改动，应先提示用户处理或暂存，避免污染发版提交
+- 若 `[Unreleased]` 区域和 git log 均无变更记录，应停止发版并提示用户
 
-### 16.8 GitHub Release 自动化
+### 17.8 GitHub Release 自动化
 
 工作流文件：[.github/workflows/release.yml](.github/workflows/release.yml)
 
