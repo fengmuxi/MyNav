@@ -77,9 +77,10 @@ ENV PORT=3000
 ENV DATABASE_PATH=/app/data/database.db
 ENV UPLOADS_PATH=/app/uploads
 ENV PUBLIC_DIR=/app/public
+ENV LOGS_PATH=/app/logs
 
 # 创建数据目录
-RUN mkdir -p /app/data /app/uploads
+RUN mkdir -p /app/data /app/uploads /app/logs
 
 # 暴露端口
 EXPOSE 3000

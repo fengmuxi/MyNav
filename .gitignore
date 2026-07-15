@@ -35,6 +35,7 @@ data/
 # 日志
 *.log
 npm-debug.log*
+server/logs/
 
 # 编辑器/系统
 .DS_Store

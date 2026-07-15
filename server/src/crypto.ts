@@ -80,9 +80,12 @@ function writeKeyPair(kp: RsaKeyPair): void {
 export function ensureKeyPair(): RsaKeyPair {
   let kp = readKeyPair();
   if (!kp) {
+    console.log('[Crypto] 数据库中未找到 RSA 密钥对，正在生成...');
     kp = generateKeyPair();
     writeKeyPair(kp);
-    console.log('[Crypto] RSA 密钥对已自动生成');
+    console.log('[Crypto] RSA 密钥对已自动生成并保存到数据库');
+  } else {
+    console.log('[Crypto] 已从数据库加载 RSA 密钥对（创建于:', new Date(kp.createdAt).toISOString(), ')');
   }
   return kp;
 }

@@ -45,13 +45,18 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
+      console.log('[Login] 开始登录，用户名:', username.trim());
       await login(username.trim(), password);
+      console.log('[Login] 登录成功');
       toast.success('登录成功，欢迎回来');
       navigate('/');
     } catch (err) {
+      console.error('[Login] 登录失败:', err);
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error || '登录失败，请重试';
+          ?.error ||
+        (err as Error)?.message ||
+        '登录失败，请重试';
       toast.error(msg);
     } finally {
       setLoading(false);

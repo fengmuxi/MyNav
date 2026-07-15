@@ -54,7 +54,8 @@ authRouter.post('/register', (req, res) => {
   let password: string;
   try {
     password = rsaDecrypt(encryptedPassword);
-  } catch {
+  } catch (err) {
+    console.error('[Auth] 密码解密失败:', err);
     res.status(400).json({ error: '密码解密失败，请刷新页面后重试' });
     return;
   }
@@ -146,7 +147,8 @@ authRouter.post('/login', (req, res) => {
   let password: string;
   try {
     password = rsaDecrypt(encryptedPassword);
-  } catch {
+  } catch (err) {
+    console.error('[Auth] 密码解密失败:', err);
     res.status(400).json({ error: '密码解密失败，请刷新页面后重试' });
     return;
   }

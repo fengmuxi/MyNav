@@ -22,6 +22,10 @@ import { navRouter } from './routes/nav.js';
 import { adminRouter } from './routes/admin.js';
 import { userRouter } from './routes/user.js';
 import { publicSettingsRouter, adminSettingsRouter } from './routes/settings.js';
+import { logsRouter } from './routes/logs.js';
+import { ensureKeyPair } from './crypto.js';
+import { initLogger, logger } from './logger.js';
+import { requestLogMiddleware, errorLogMiddleware } from './middleware/logMiddleware.js';
 
 // 解析当前模块路径，定位上传目录
 const __filename = fileURLToPath(import.meta.url);
@@ -47,9 +51,20 @@ try {
   process.exit(1);
 }
 
-// 2) 确保上传目录存在（recursive: true 会一并创建父目录）
+// 2) 确保 RSA 密钥对已生成（首次启动自动生成并保存到数据库）
+try {
+  ensureKeyPair();
+} catch (err) {
+  console.error('[Fatal] RSA 密钥对初始化失败：', err);
+  process.exit(1);
+}
+
+// 3) 确保上传目录存在（recursive: true 会一并创建父目录）
 fs.mkdirSync(AVATARS_ROOT, { recursive: true });
 fs.mkdirSync(ICONS_ROOT, { recursive: true });
+
+// 4) 初始化日志系统（创建日志目录 + 清理过期日志）
+initLogger();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -57,6 +72,7 @@ const PORT = Number(process.env.PORT) || 3000;
 // 3) 中间件
 app.use(cors());                       // 跨域：开发环境允许所有来源
 app.use(express.json({ limit: '5mb' }));  // 解析 JSON 请求体，放大限制以支持 base64 头像
+app.use(requestLogMiddleware);          // 请求日志记录
 
 // 4) 静态文件：暴露 /uploads/* 资源（头像图片等）
 app.use('/uploads', express.static(UPLOADS_ROOT, {
@@ -207,6 +223,7 @@ app.use('/api', navRouter);                  // 提供 /api/public/nav 与 /api/
 app.use('/api/settings', publicSettingsRouter); // 提供 /api/settings/public
 app.use('/api/admin', adminRouter);          // 提供 /api/admin/nav、/api/admin/users 等
 app.use('/api/admin', adminSettingsRouter);  // 提供 /api/admin/settings（GET/PUT）
+app.use('/api/admin/logs', logsRouter);     // 提供 /api/admin/logs/* 日志管理
 app.use('/api/user', userRouter); // 用户个人数据（主题、个人资料、头像等）
 
 // 7) 前端静态资源托管（生产环境单镜像部署）
@@ -234,11 +251,8 @@ if (PUBLIC_DIR && fs.existsSync(PUBLIC_DIR)) {
   console.log(`[Server] 已启用前端静态托管：${PUBLIC_DIR}`);
 }
 
-// 8) 全局错误处理
-app.use((err: unknown, _req: unknown, res: express.Response, _next: unknown) => {
-  console.error('[Error]', err);
-  res.status(500).json({ error: '服务器内部错误' });
-});
+// 8) 全局错误处理（记录日志 + 返回 500）
+app.use(errorLogMiddleware);
 
 // 8) 启动监听
 app.listen(PORT, () => {

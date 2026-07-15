@@ -11,6 +11,7 @@ import MyNav from './pages/MyNav';
 import NavMgr from './pages/Admin/NavMgr';
 import UserMgr from './pages/Admin/UserMgr';
 import SystemSettings from './pages/Admin/SystemSettings';
+import Logs from './pages/Admin/Logs';
 import { useAuthStore } from './store/authStore';
 import { useSettingsStore } from './store/settingsStore';
 
@@ -103,6 +104,14 @@ export default function App() {
         element={
           <AdminRoute>
             <SystemSettings />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/logs"
+        element={
+          <AdminRoute>
+            <Logs />
           </AdminRoute>
         }
       />

@@ -39,10 +39,15 @@ export const useAuthStore = create<AuthState>()(
       // 调用登录接口并保存 token/user
       // 密码经 RSA 加密后传输，登录成功后立即拉取用户主题方案
       login: async (username, password) => {
+        console.log('[AuthStore] 加密密码...');
         const encryptedPassword = await encryptPassword(password);
+        console.log('[AuthStore] 发送登录请求...');
         const { data } = await api.post('/auth/login', { username, password: encryptedPassword });
+        console.log('[AuthStore] 登录请求成功，token:', data.token ? '存在' : '缺失');
+        if (!data.token || !data.user) {
+          throw new Error('登录响应不完整');
+        }
         set({ token: data.token, user: data.user });
-        // 拉取远端主题并覆盖本地（后端为 null 时保留本地偏好）
         await useThemeStore.getState().fetchRemote();
       },
 
