@@ -12,13 +12,16 @@ import NavMgr from './pages/Admin/NavMgr';
 import UserMgr from './pages/Admin/UserMgr';
 import SystemSettings from './pages/Admin/SystemSettings';
 import Logs from './pages/Admin/Logs';
+import ErrorPage from './pages/ErrorPage';
 import { useAuthStore } from './store/authStore';
 import { useSettingsStore } from './store/settingsStore';
 
-// 路由守卫：仅 ADMIN 可访问
+// 路由守卫：仅 ADMIN 可访问，未登录跳登录，已登录但无权限跳 403
 function AdminRoute({ children }: { children: JSX.Element }) {
+  const token = useAuthStore((s) => s.token);
   const role = useAuthStore((s) => s.user?.role);
-  if (role !== 'ADMIN') return <Navigate to="/login" replace />;
+  if (!token) return <Navigate to="/login" replace />;
+  if (role !== 'ADMIN') return <ErrorPage code="403" />;
   return children;
 }
 
@@ -115,7 +118,14 @@ export default function App() {
           </AdminRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* ===== 异常路由 ===== */}
+      <Route path="/403" element={<ErrorPage code="403" />} />
+      <Route path="/500" element={<ErrorPage code="500" />} />
+      <Route path="/502" element={<ErrorPage code="502" />} />
+      <Route path="/503" element={<ErrorPage code="503" />} />
+      <Route path="/404" element={<ErrorPage code="404" />} />
+      {/* 兜底：未匹配的路由显示 404 */}
+      <Route path="*" element={<ErrorPage code="404" />} />
     </Routes>
   );
 }

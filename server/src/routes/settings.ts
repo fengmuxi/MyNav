@@ -22,6 +22,8 @@ import {
   writeSettings,
 } from '../settings.js';
 import { getVersionInfo, VERSION } from '../version.js';
+import { sendTestEmail } from '../mailer.js';
+import type { SmtpConfig } from '../settings.js';
 
 /**
  * 公开设置路由器（挂在 /api/settings）
@@ -262,4 +264,47 @@ adminSettingsRouter.put('/settings', authMiddleware, roleMiddleware, (req, res) 
   // 设置变更后失效版本检查缓存（githubUrl 可能被修改）
   versionCheckCache = null;
   res.json(merged);
+});
+
+/**
+ * POST /api/admin/settings/test-email
+ * 测试邮件发送：使用当前 SMTP 配置发送测试邮件到指定邮箱
+ * body: { smtp, to }
+ * - smtp: 当前表单中的 SMTP 配置（可选，不传则使用已保存的配置）
+ * - to: 接收测试邮件的邮箱地址
+ */
+adminSettingsRouter.post('/settings/test-email', authMiddleware, roleMiddleware, async (req, res) => {
+  const { smtp: inputSmtp, to } = req.body ?? {};
+
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(to))) {
+    res.status(400).json({ error: '请输入有效的接收邮箱地址' });
+    return;
+  }
+
+  // 使用传入的 SMTP 配置，或回退到已保存的配置
+  const cfg = readSettings();
+  const smtp: SmtpConfig = {
+    enabled: true,
+    host: (inputSmtp?.host || cfg.smtp.host) || '',
+    port: inputSmtp?.port ?? cfg.smtp.port,
+    secure: inputSmtp?.secure ?? cfg.smtp.secure,
+    user: (inputSmtp?.user || cfg.smtp.user) || '',
+    pass: (inputSmtp?.pass || cfg.smtp.pass) || '',
+    fromName: (inputSmtp?.fromName || cfg.smtp.fromName) || cfg.siteName || 'MyNav',
+    fromEmail: (inputSmtp?.fromEmail || cfg.smtp.fromEmail) || '',
+  };
+
+  // 基本配置校验
+  if (!smtp.host || !smtp.user || !smtp.pass) {
+    res.status(400).json({ error: '请先填写 SMTP 服务器、用户名和密码/授权码' });
+    return;
+  }
+
+  const result = await sendTestEmail(smtp, String(to), smtp.fromName || cfg.siteName || 'MyNav');
+
+  if (result.delivered) {
+    res.json({ ok: true, message: '测试邮件发送成功，请检查收件箱（含垃圾箱）' });
+  } else {
+    res.status(500).json({ ok: false, error: result.error || '邮件发送失败' });
+  }
 });

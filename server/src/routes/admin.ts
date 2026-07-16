@@ -42,6 +42,7 @@ import {
   generatePbkdf2Salt,
 } from '../crypto.js';
 import { createZip, readZipFile } from '../zip.js';
+import { computeVerifier } from '../srp.js';
 
 export const adminRouter = Router();
 
@@ -357,15 +358,29 @@ adminRouter.post('/users', (req, res) => {
     return;
   }
 
+  // 邮箱归一化 + 唯一性检查
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : null;
+  if (normalizedEmail) {
+    const emailExists = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+    if (emailExists) {
+      res.status(409).json({ error: '该邮箱已被其他用户绑定' });
+      return;
+    }
+  }
+
   const passwordHash = bcrypt.hashSync(password, 10);
+  // 同时计算 SRP verifier，确保该账户在 HTTP 环境下也能通过 SRP 登录
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier(username, password);
   const created = db
     .insert(users)
     .values({
       username,
       passwordHash,
+      srpSalt,
+      srpVerifier,
       role: role === 'ADMIN' ? 'ADMIN' : 'USER',
       displayName: displayName || null,
-      email: email || null,
+      email: normalizedEmail,
       bio: bio || null,
     })
     .returning()
@@ -455,7 +470,16 @@ adminRouter.put('/users/:id', (req, res) => {
       res.status(400).json({ error: '邮箱格式无效' });
       return;
     }
-    patch.email = (email || '').trim() || null;
+    const normalizedEmail = email ? String(email).toLowerCase().trim() : null;
+    // 唯一性检查：排除当前用户自身
+    if (normalizedEmail) {
+      const emailOwner = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+      if (emailOwner && emailOwner.id !== id) {
+        res.status(409).json({ error: '该邮箱已被其他用户绑定' });
+        return;
+      }
+    }
+    patch.email = normalizedEmail;
   }
 
   // 简介
@@ -508,15 +532,17 @@ adminRouter.put('/users/:id/password', (req, res) => {
     return;
   }
 
-  const existing = db.select({ id: users.id }).from(users).where(eq(users.id, id)).get();
+  const existing = db.select({ id: users.id, username: users.username }).from(users).where(eq(users.id, id)).get();
   if (!existing) {
     res.status(404).json({ error: '用户不存在' });
     return;
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
+  // 同步更新 SRP verifier，确保重置密码后 HTTP 环境下 SRP 登录仍然可用
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier(existing.username, newPassword);
   db.update(users)
-    .set({ passwordHash: newHash })
+    .set({ passwordHash: newHash, srpSalt, srpVerifier })
     .where(eq(users.id, id))
     .run();
 
@@ -746,17 +772,19 @@ adminRouter.post('/backup/import', (req, res) => {
     db.delete(users).run();
     db.delete(settingsTable).run();
 
-    // 3. 恢复 users（含 passwordHash，保证登录密码可用）
+    // 3. 恢复 users（含 passwordHash 和 SRP 凭据，保证两种登录方式均可用）
     for (const u of payload.users ?? []) {
       db.insert(users)
         .values({
           id: u.id,
           username: u.username,
           passwordHash: u.passwordHash,
+          srpSalt: u.srpSalt,
+          srpVerifier: u.srpVerifier,
           role: u.role,
           theme: u.theme,
           displayName: u.displayName,
-          email: u.email,
+          email: u.email ? String(u.email).toLowerCase().trim() : null,
           bio: u.bio,
           avatar: u.avatar,
           status: u.status,

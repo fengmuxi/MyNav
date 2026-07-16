@@ -68,6 +68,9 @@ export default function SystemSettings() {
   const [importing, setImporting] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const { logout } = useAuthStore();
+  // 测试邮件相关状态
+  const [testEmail, setTestEmail] = useState('');
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
   // 首次加载：从后端拉取设置；失败时尝试读取本地草稿
   useEffect(() => {
@@ -156,6 +159,54 @@ export default function SystemSettings() {
       toast.success('已重新加载后端设置');
     } catch {
       toast.error('加载失败');
+    }
+  };
+
+  // 发送测试邮件
+  const onSendTestEmail = async () => {
+    const trimmedEmail = testEmail.trim();
+    if (!trimmedEmail) {
+      toast.warning('请输入接收测试邮件的邮箱地址');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.warning('邮箱格式不正确');
+      return;
+    }
+
+    setSendingTestEmail(true);
+    try {
+      const { data } = await api.post('/admin/settings/test-email', {
+        smtp: settings.smtp,
+        to: trimmedEmail,
+      });
+      if (data.ok) {
+        toast.success(data.message || '测试邮件发送成功');
+      } else {
+        toast.error(data.error || '发送失败');
+      }
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || '发送失败';
+      // 当返回 553 错误时，使用 Modal 展示完整提示（含排查步骤）
+      if (/553/.test(msg) || /Mail from must equal authorized user/i.test(msg)) {
+        const proceed = window.confirm(
+          `${msg}\n\n` +
+          `排查步骤：\n` +
+          `1. 确认「发件人邮箱」与「用户名」同域（如都为 xxx@qq.com）\n` +
+          `2. QQ/网易/Gmail 邮箱需在邮箱后台开启 SMTP 服务并使用授权码\n` +
+          `3. 若服务商允许，可在邮箱后台添加发件别名\n\n` +
+          `点击「确定」打开后端日志页面，点击「取消」关闭`,
+        );
+        if (proceed) {
+          window.open('/admin/logs', '_blank');
+        }
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setSendingTestEmail(false);
     }
   };
 
@@ -634,8 +685,35 @@ export default function SystemSettings() {
                 />
               </div>
             </div>
+            {/* 测试邮件 */}
+            <div className="pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
+              <div className="text-sm font-medium mb-2.5" style={{ color: 'var(--text-primary)' }}>
+                测试邮件
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={testEmail}
+                  onChange={(e) => setTestEmail(e.target.value)}
+                  placeholder="请输入接收测试邮件的邮箱地址"
+                  className={inputCls}
+                  style={{ flex: 1, ...inputStyle }}
+                  {...focusHandlers()}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onSendTestEmail}
+                  disabled={sendingTestEmail || !settings.smtp.enabled}
+                >
+                  {sendingTestEmail ? '发送中…' : '发送测试邮件'}
+                </Button>
+              </div>
+            </div>
             <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              提示：QQ 邮箱需使用授权码而非登录密码；Gmail 需使用应用专用密码。生产环境需先安装 nodemailer：<code style={{ fontFamily: 'var(--font-mono)' }}>cd server && npm install nodemailer</code>
+              提示：QQ 邮箱需使用授权码而非登录密码；Gmail 需使用应用专用密码。
+              <br />
+              <strong style={{ color: 'var(--state-warning)' }}>发件人邮箱必须与 SMTP 用户名（@ 之后域名）一致</strong>，否则服务器会返回 553 错误拒绝发送。未填写「发件人邮箱」时将自动使用用户名作为发件人。
             </p>
           </div>
         </section>

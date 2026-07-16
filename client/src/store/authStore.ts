@@ -23,6 +23,8 @@ interface AuthState {
   /** persist 是否已完成从 localStorage 水合 */
   hasHydrated: boolean;
   login: (username: string, password: string) => Promise<void>;
+  /** 邮箱验证码登录（无密码登录） */
+  loginByEmailCode: (email: string, code: string) => Promise<void>;
   logout: () => void;
   /** 局部更新当前用户信息（用于个人资料编辑后同步本地状态） */
   updateUser: (patch: Partial<User>) => void;
@@ -83,6 +85,14 @@ export const useAuthStore = create<AuthState>()(
         }
 
         set({ token, user });
+        await useThemeStore.getState().fetchRemote();
+      },
+
+      // 邮箱验证码登录：无需密码，通过邮箱验证码直接登录
+      loginByEmailCode: async (email, code) => {
+        const { data } = await api.post('/auth/email/login', { email, code });
+        if (!data.token || !data.user) throw new Error('登录响应不完整');
+        set({ token: data.token, user: data.user as User });
         await useThemeStore.getState().fetchRemote();
       },
 

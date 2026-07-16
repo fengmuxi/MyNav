@@ -14,7 +14,7 @@ import { db } from '../db/index.js';
 import { users, passwordResets } from '../db/schema.js';
 import { signToken } from '../middleware/authMiddleware.js';
 import { readSettings } from '../settings.js';
-import { sendPasswordResetEmail } from '../mailer.js';
+import { sendPasswordResetEmail, sendVerificationCodeEmail, sendLoginCodeEmail } from '../mailer.js';
 import { rsaDecrypt, getPublicKeyPem } from '../crypto.js';
 import {
   computeVerifier,
@@ -31,6 +31,303 @@ export const authRouter = Router();
  */
 authRouter.get('/public-key', (_req, res) => {
   res.json({ publicKey: getPublicKeyPem() });
+});
+
+/* ======================================================================
+ *  邮箱验证码（注册时验证邮箱真实性）
+ * ------------------------------------------------------------------
+ * - POST /api/auth/email/send-code   发送 6 位验证码到邮箱
+ *
+ * 存储方案：内存 Map，key=邮箱，value={ code, expiresAt, sentAt }
+ * - 验证码 5 分钟有效
+ * - 同一邮箱 60 秒内不可重复发送（防滥用）
+ * - 验证成功或注册后自动清除
+ * ====================================================================== */
+
+interface EmailVerificationEntry {
+  code: string;
+  /** 过期时间戳（毫秒），5 分钟有效 */
+  expiresAt: number;
+  /** 上次发送时间戳（毫秒），用于 60 秒冷却 */
+  sentAt: number;
+}
+
+/** 邮箱验证码内存存储：Map<email, EmailVerificationEntry> */
+const emailVerificationCodes = new Map<string, EmailVerificationEntry>();
+
+/** 验证码有效期：5 分钟 */
+const CODE_TTL_MS = 5 * 60 * 1000;
+/** 发送冷却时间：60 秒 */
+const CODE_COOLDOWN_MS = 60 * 1000;
+
+/** 生成 6 位数字验证码 */
+function generateVerificationCode(): string {
+  return String(Math.floor(Math.random() * 1000000)).padStart(6, '0');
+}
+
+/**
+ * POST /api/auth/email/send-code
+ * 发送邮箱验证码（用于注册时验证邮箱真实性）
+ * body: { email }
+ */
+authRouter.post('/email/send-code', async (req, res) => {
+  const cfg = readSettings();
+
+  // 注册关闭时不允许发送验证码
+  if (!cfg.allowRegister || cfg.registerMethod === 'closed') {
+    res.status(403).json({ error: '当前已关闭注册' });
+    return;
+  }
+
+  const { email } = req.body ?? {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    res.status(400).json({ error: '邮箱格式无效' });
+    return;
+  }
+
+  const normalizedEmail = String(email).toLowerCase().trim();
+
+  // 检查邮箱是否已被注册
+  const existing = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+  if (existing) {
+    res.status(409).json({ error: '该邮箱已被注册' });
+    return;
+  }
+
+  // 60 秒冷却检查
+  const prev = emailVerificationCodes.get(normalizedEmail);
+  if (prev && Date.now() - prev.sentAt < CODE_COOLDOWN_MS) {
+    const remaining = Math.ceil((CODE_COOLDOWN_MS - (Date.now() - prev.sentAt)) / 1000);
+    res.status(429).json({ error: `发送过于频繁，请 ${remaining} 秒后重试` });
+    return;
+  }
+
+  // 生成验证码并发送
+  const code = generateVerificationCode();
+  const result = await sendVerificationCodeEmail(cfg.smtp, normalizedEmail, code, cfg.siteName);
+
+  if (!result.delivered) {
+    // SMTP 未配置时返回开发模式验证码（与忘记密码的 devLink 模式一致）
+    if (result.devLink) {
+      emailVerificationCodes.set(normalizedEmail, {
+        code,
+        expiresAt: Date.now() + CODE_TTL_MS,
+        sentAt: Date.now(),
+      });
+      res.json({
+        sent: false,
+        devCode: result.devLink,
+        message: 'SMTP 未配置，开发模式下验证码已直接返回',
+      });
+      return;
+    }
+    res.status(500).json({ error: result.error || '验证码发送失败' });
+    return;
+  }
+
+  emailVerificationCodes.set(normalizedEmail, {
+    code,
+    expiresAt: Date.now() + CODE_TTL_MS,
+    sentAt: Date.now(),
+  });
+
+  res.json({ sent: true, message: '验证码已发送至邮箱' });
+});
+
+/**
+ * 校验邮箱验证码（内部函数，供注册路由调用）
+ * @returns true=验证通过，false=验证失败
+ */
+function verifyEmailCode(email: string, inputCode: string): boolean {
+  const entry = emailVerificationCodes.get(email);
+  if (!entry) return false;
+  if (Date.now() > entry.expiresAt) {
+    emailVerificationCodes.delete(email);
+    return false;
+  }
+  if (entry.code !== inputCode) return false;
+  // 验证成功后清除，一次性使用
+  emailVerificationCodes.delete(email);
+  return true;
+}
+
+/* ======================================================================
+ *  邮箱验证码登录（无密码登录）
+ * ------------------------------------------------------------------
+ * - POST /api/auth/email/login/send-code   发送登录验证码到已绑定邮箱
+ * - POST /api/auth/email/login             验证码校验并签发 JWT
+ *
+ * 与注册验证码共用 emailVerificationCodes，key 加 "login:" 前缀区分用途
+ * ====================================================================== */
+
+/**
+ * POST /api/auth/email/login/send-code
+ * 发送登录验证码到已绑定的邮箱
+ * body: { email }
+ */
+authRouter.post('/email/login/send-code', async (req, res) => {
+  const cfg = readSettings();
+
+  const { email } = req.body ?? {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    res.status(400).json({ error: '邮箱格式无效' });
+    return;
+  }
+
+  const normalizedEmail = String(email).toLowerCase().trim();
+
+  // 查找绑定该邮箱的用户
+  const user = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+  if (!user) {
+    // 安全考虑：不暴露邮箱是否存在，返回模糊成功
+    res.json({ sent: true, message: '若该邮箱已绑定账户，验证码已发送' });
+    return;
+  }
+
+  // 账户锁定检查
+  if (user.lockedUntil && user.lockedUntil > Date.now()) {
+    const remainingMin = Math.ceil((user.lockedUntil - Date.now()) / 60000);
+    res.status(423).json({ error: `账户已锁定，请 ${remainingMin} 分钟后重试` });
+    return;
+  }
+
+  // 账户状态检查
+  if (user.status !== 'active') {
+    res.status(403).json({ error: '账户已被禁用，请联系管理员' });
+    return;
+  }
+
+  // 60 秒冷却检查（使用 login: 前缀的 key）
+  const loginKey = `login:${normalizedEmail}`;
+  const prev = emailVerificationCodes.get(loginKey);
+  if (prev && Date.now() - prev.sentAt < CODE_COOLDOWN_MS) {
+    const remaining = Math.ceil((CODE_COOLDOWN_MS - (Date.now() - prev.sentAt)) / 1000);
+    res.status(429).json({ error: `发送过于频繁，请 ${remaining} 秒后重试` });
+    return;
+  }
+
+  // 生成验证码并发送（使用登录专属邮件模板）
+  const code = generateVerificationCode();
+  const result = await sendLoginCodeEmail(cfg.smtp, normalizedEmail, code, cfg.siteName);
+
+  if (!result.delivered) {
+    if (result.devLink) {
+      // 开发模式：SMTP 未配置
+      emailVerificationCodes.set(loginKey, {
+        code,
+        expiresAt: Date.now() + CODE_TTL_MS,
+        sentAt: Date.now(),
+      });
+      res.json({
+        sent: false,
+        devCode: result.devLink,
+        message: 'SMTP 未配置，开发模式下验证码已直接返回',
+      });
+      return;
+    }
+    res.status(500).json({ error: result.error || '验证码发送失败' });
+    return;
+  }
+
+  emailVerificationCodes.set(loginKey, {
+    code,
+    expiresAt: Date.now() + CODE_TTL_MS,
+    sentAt: Date.now(),
+  });
+
+  res.json({ sent: true, message: '验证码已发送至邮箱' });
+});
+
+/**
+ * POST /api/auth/email/login
+ * 邮箱验证码登录：校验验证码后签发 JWT
+ * body: { email, code }
+ */
+authRouter.post('/email/login', (req, res) => {
+  const { email, code } = req.body ?? {};
+  if (!email || !code) {
+    res.status(400).json({ error: '邮箱和验证码不能为空' });
+    return;
+  }
+
+  const normalizedEmail = String(email).toLowerCase().trim();
+  const loginKey = `login:${normalizedEmail}`;
+
+  const user = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+  if (!user) {
+    res.status(401).json({ error: '验证码无效或已过期' });
+    return;
+  }
+
+  // 账户锁定检查
+  if (user.lockedUntil && user.lockedUntil > Date.now()) {
+    const remainingMin = Math.ceil((user.lockedUntil - Date.now()) / 60000);
+    res.status(423).json({ error: `账户已锁定，请 ${remainingMin} 分钟后重试` });
+    return;
+  }
+
+  // 校验验证码
+  if (!verifyEmailCode(loginKey, String(code))) {
+    // 验证失败：累加失败次数
+    const cfg = readSettings();
+    const attempts = (user.failedLoginAttempts || 0) + 1;
+    const maxAttempts = cfg.maxLoginAttempts > 0 ? cfg.maxLoginAttempts : 5;
+
+    if (attempts >= maxAttempts) {
+      const lockMs = (cfg.lockMinutes > 0 ? cfg.lockMinutes : 30) * 60 * 1000;
+      db.update(users)
+        .set({ failedLoginAttempts: 0, lockedUntil: Date.now() + lockMs })
+        .where(eq(users.id, user.id))
+        .run();
+      const lockMin = cfg.lockMinutes > 0 ? cfg.lockMinutes : 30;
+      res.status(423).json({ error: `验证码错误次数过多，账户已锁定 ${lockMin} 分钟` });
+    } else {
+      db.update(users)
+        .set({ failedLoginAttempts: attempts })
+        .where(eq(users.id, user.id))
+        .run();
+      const remaining = maxAttempts - attempts;
+      res.status(401).json({
+        error: `验证码无效或已过期（剩余 ${remaining} 次尝试机会）`,
+      });
+    }
+    return;
+  }
+
+  // 账户状态检查
+  if (user.status !== 'active') {
+    res.status(403).json({ error: '账户已被禁用，请联系管理员' });
+    return;
+  }
+
+  // 登录成功：重置失败计数
+  if (user.failedLoginAttempts || user.lockedUntil) {
+    db.update(users)
+      .set({ failedLoginAttempts: 0, lockedUntil: 0 })
+      .where(eq(users.id, user.id))
+      .run();
+  }
+
+  // 签发 JWT
+  const token = signToken({
+    id: user.id,
+    username: user.username,
+    role: user.role as 'USER' | 'ADMIN',
+  });
+
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      displayName: user.displayName,
+      email: user.email,
+      bio: user.bio,
+      avatar: user.avatar,
+      status: user.status,
+    },
+  });
 });
 
 /**
@@ -54,7 +351,7 @@ authRouter.post('/register', (req, res) => {
     return;
   }
 
-  const { username, password: encryptedPassword, role, displayName, email, bio, inviteCode } = req.body ?? {};
+  const { username, password: encryptedPassword, role, displayName, email, bio, inviteCode, emailCode } = req.body ?? {};
 
   // RSA 解密密码
   let password: string;
@@ -91,10 +388,31 @@ authRouter.post('/register', (req, res) => {
     return;
   }
 
-  // 邮箱格式校验（可选字段，传入时才校验）
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    res.status(400).json({ error: '邮箱格式无效' });
-    return;
+  // 邮箱格式校验 + 验证码校验（填写邮箱时必须验证）
+  let normalizedEmail: string | null = null;
+  if (email) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      res.status(400).json({ error: '邮箱格式无效' });
+      return;
+    }
+    normalizedEmail = String(email).toLowerCase().trim();
+
+    // 校验验证码
+    if (!emailCode) {
+      res.status(400).json({ error: '请输入邮箱验证码' });
+      return;
+    }
+    if (!verifyEmailCode(normalizedEmail, String(emailCode))) {
+      res.status(400).json({ error: '邮箱验证码无效或已过期' });
+      return;
+    }
+
+    // 检查邮箱是否已被注册
+    const emailExists = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+    if (emailExists) {
+      res.status(409).json({ error: '该邮箱已被注册' });
+      return;
+    }
   }
 
   // bcrypt 哈希密码，saltRounds=10
@@ -114,7 +432,7 @@ authRouter.post('/register', (req, res) => {
       srpVerifier,
       role: finalRole,
       displayName: displayName || null,
-      email: email || null,
+      email: normalizedEmail,
       bio: bio || null,
     })
     .returning()
@@ -325,7 +643,7 @@ authRouter.post('/forgot-password', async (req, res) => {
   }
 
   // 生产模式：发送邮件
-  const result = await sendPasswordResetEmail(cfg.smtp, user.email, resetUrl, cfg.siteName);
+  const result = await sendPasswordResetEmail(cfg.smtp, user.email, resetUrl, cfg.siteName, user.username);
   if (result.delivered) {
     res.json({
       sent: true,
@@ -442,6 +760,7 @@ authRouter.post('/srp/register', (req, res) => {
     email,
     bio,
     inviteCode,
+    emailCode,
   } = req.body ?? {};
 
   // 校验 SRP 参数
@@ -470,10 +789,29 @@ authRouter.post('/srp/register', (req, res) => {
     return;
   }
 
-  // 邮箱校验
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    res.status(400).json({ error: '邮箱格式无效' });
-    return;
+  // 邮箱格式校验 + 验证码校验（填写邮箱时必须验证）
+  let normalizedEmail: string | null = null;
+  if (email) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      res.status(400).json({ error: '邮箱格式无效' });
+      return;
+    }
+    normalizedEmail = String(email).toLowerCase().trim();
+
+    if (!emailCode) {
+      res.status(400).json({ error: '请输入邮箱验证码' });
+      return;
+    }
+    if (!verifyEmailCode(normalizedEmail, String(emailCode))) {
+      res.status(400).json({ error: '邮箱验证码无效或已过期' });
+      return;
+    }
+
+    const emailExists = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+    if (emailExists) {
+      res.status(409).json({ error: '该邮箱已被注册' });
+      return;
+    }
   }
 
   const finalRole = 'USER';
@@ -488,7 +826,7 @@ authRouter.post('/srp/register', (req, res) => {
       srpVerifier: verifier,
       role: finalRole,
       displayName: displayName || null,
-      email: email || null,
+      email: normalizedEmail,
       bio: bio || null,
     })
     .returning()

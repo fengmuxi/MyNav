@@ -20,6 +20,7 @@ import { navGroups, navCategories, navItems, navItemClicks, users } from '../db/
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { rsaDecrypt, aesEncrypt, aesDecrypt, deriveUserBackupKey } from '../crypto.js';
 import { createZip, readZipFile } from '../zip.js';
+import { computeVerifier } from '../srp.js';
 import { PATHS } from '../index.js';
 
 export const userRouter = Router();
@@ -150,7 +151,16 @@ userRouter.put('/profile', (req, res) => {
       res.status(400).json({ error: '邮箱格式无效' });
       return;
     }
-    patch.email = (email || '').trim() || null;
+    const normalizedEmail = email ? String(email).toLowerCase().trim() : null;
+    // 唯一性检查：排除当前用户自身
+    if (normalizedEmail) {
+      const emailOwner = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+      if (emailOwner && emailOwner.id !== userId) {
+        res.status(409).json({ error: '该邮箱已被其他用户绑定' });
+        return;
+      }
+    }
+    patch.email = normalizedEmail;
   }
 
   if (bio !== undefined) {
@@ -208,7 +218,7 @@ userRouter.put('/password', (req, res) => {
   }
 
   const row = db
-    .select({ passwordHash: users.passwordHash })
+    .select({ passwordHash: users.passwordHash, username: users.username })
     .from(users)
     .where(eq(users.id, userId))
     .get();
@@ -224,8 +234,10 @@ userRouter.put('/password', (req, res) => {
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
+  // 同步更新 SRP verifier，确保改密后 HTTP 环境下 SRP 登录仍然可用
+  const { salt: srpSalt, verifier: srpVerifier } = computeVerifier(row.username, newPassword);
   db.update(users)
-    .set({ passwordHash: newHash })
+    .set({ passwordHash: newHash, srpSalt, srpVerifier })
     .where(eq(users.id, userId))
     .run();
 
@@ -979,7 +991,17 @@ userRouter.post('/backup/import', (req, res) => {
     const u = payload.user;
     if (u) {
       if (u.displayName !== undefined) userPatch.displayName = u.displayName;
-      if (u.email !== undefined) userPatch.email = u.email;
+      if (u.email !== undefined) {
+        // 邮箱归一化 + 唯一性检查（排除自身）
+        const normalizedEmail = u.email ? String(u.email).toLowerCase().trim() : null;
+        if (normalizedEmail) {
+          const emailOwner = db.select().from(users).where(eq(users.email, normalizedEmail)).get();
+          if (emailOwner && emailOwner.id !== userId) {
+            throw new Error('备份中的邮箱已被其他用户绑定，无法恢复');
+          }
+        }
+        userPatch.email = normalizedEmail;
+      }
       if (u.bio !== undefined) userPatch.bio = u.bio;
       if (u.avatar !== undefined) userPatch.avatar = u.avatar;
       if (u.theme !== undefined) userPatch.theme = u.theme;

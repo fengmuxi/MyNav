@@ -1,16 +1,17 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { Button } from '../components/ui/Button';
 import { OAuthIcon } from '../components/ui/OAuthIcon';
 import { toast } from '../store/toastStore';
+import api from '../api/axios';
 import type { OAuthProviderId } from '../types/settings';
 
 /**
  * 登录页 - 对齐设计稿 Clean & Minimal
  * - Logo + 卡片表单（欢迎回来 + 副标题）
- * - 用户名 + 密码（带可见性切换）
+ * - 两种登录模式：密码登录 / 邮箱验证码登录（Tab 切换）
  * - 记住我 + 忘记密码占位
  * - 登录按钮
  * - 分隔线 + 第三方登录（仅渲染管理员已启用的提供方，显示真实品牌图标）
@@ -19,13 +20,22 @@ import type { OAuthProviderId } from '../types/settings';
 export default function Login() {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
+  const loginByEmailCode = useAuthStore((s) => s.loginByEmailCode);
   const settings = useSettingsStore((s) => s.settings);
 
+  const [loginMode, setLoginMode] = useState<'password' | 'email'>('password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  // 邮箱验证码登录相关状态
+  const [email, setEmail] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [codeCountdown, setCodeCountdown] = useState(0);
+  const [sendingCode, setSendingCode] = useState(false);
+  const codeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 动态设置页面标题
   useEffect(() => {
@@ -36,6 +46,58 @@ export default function Login() {
 
   const enabledProviders = settings?.oauthProviders ?? [];
 
+  // 组件卸载时清除倒计时定时器
+  useEffect(() => {
+    return () => {
+      if (codeTimerRef.current) clearInterval(codeTimerRef.current);
+    };
+  }, []);
+
+  // 发送邮箱登录验证码
+  const onSendLoginCode = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.warning('请先填写邮箱地址');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.warning('邮箱格式不正确');
+      return;
+    }
+
+    setSendingCode(true);
+    try {
+      const { data } = await api.post('/auth/email/login/send-code', { email: trimmedEmail });
+      if (!data.sent && data.devCode) {
+        toast.info(`开发模式：验证码为 ${data.devCode}`);
+        setEmailCode(data.devCode);
+      } else {
+        toast.success('验证码已发送至邮箱');
+      }
+      // 启动 60 秒倒计时
+      setCodeCountdown(60);
+      codeTimerRef.current = setInterval(() => {
+        setCodeCountdown((prev) => {
+          if (prev <= 1) {
+            if (codeTimerRef.current) {
+              clearInterval(codeTimerRef.current);
+              codeTimerRef.current = null;
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || '验证码发送失败';
+      toast.error(msg);
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
   // 点击第三方登录：当前未接入完整 OAuth 流程，给出明确提示
   const onOAuthClick = (provider: { id: OAuthProviderId; name: string }) => {
     toast.warning(`${provider.name} 登录尚未接入 OAuth 回调，请联系管理员完成配置。`);
@@ -45,8 +107,23 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      console.log('[Login] 开始登录，用户名:', username.trim());
-      await login(username.trim(), password);
+      if (loginMode === 'email') {
+        // 邮箱验证码登录
+        const trimmedEmail = email.trim();
+        if (!trimmedEmail) {
+          toast.warning('请输入邮箱地址');
+          return;
+        }
+        if (!emailCode.trim()) {
+          toast.warning('请输入验证码');
+          return;
+        }
+        await loginByEmailCode(trimmedEmail, emailCode.trim());
+      } else {
+        // 密码登录
+        console.log('[Login] 开始登录，用户名:', username.trim());
+        await login(username.trim(), password);
+      }
       console.log('[Login] 登录成功');
       toast.success('登录成功，欢迎回来');
       navigate('/');
@@ -124,7 +201,35 @@ export default function Login() {
             登录你的 {settings?.siteName ?? 'MyNav'} 账户
           </p>
 
+          {/* 登录模式切换 Tab */}
+          <div className="flex mb-6 rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-default)' }}>
+            <button
+              type="button"
+              onClick={() => setLoginMode('password')}
+              className="flex-1 h-10 text-sm font-medium transition-all duration-150"
+              style={{
+                backgroundColor: loginMode === 'password' ? 'var(--color-primary)' : 'var(--bg-surface)',
+                color: loginMode === 'password' ? '#fff' : 'var(--text-secondary)',
+              }}
+            >
+              密码登录
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMode('email')}
+              className="flex-1 h-10 text-sm font-medium transition-all duration-150"
+              style={{
+                backgroundColor: loginMode === 'email' ? 'var(--color-primary)' : 'var(--bg-surface)',
+                color: loginMode === 'email' ? '#fff' : 'var(--text-secondary)',
+              }}
+            >
+              邮箱验证码登录
+            </button>
+          </div>
+
           <form onSubmit={onSubmit} className="flex flex-col gap-[18px]">
+            {loginMode === 'password' ? (
+              <>
             {/* 用户名 */}
             <div>
               <label
@@ -261,6 +366,93 @@ export default function Login() {
                 忘记密码?
               </Link>
             </div>
+              </>
+            ) : (
+              <>
+                {/* 邮箱 */}
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="block text-sm font-medium mb-1.5"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    邮箱地址
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="请输入已绑定的邮箱"
+                    autoComplete="email"
+                    className="w-full h-11 px-3.5 text-sm rounded-lg border outline-none transition-all duration-150"
+                    style={{
+                      backgroundColor: 'var(--bg-surface)',
+                      borderColor: 'var(--border-default)',
+                      color: 'var(--text-primary)',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border-focus)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px var(--color-primary-50)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border-default)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  />
+                </div>
+
+                {/* 验证码 */}
+                <div>
+                  <label
+                    htmlFor="emailCode"
+                    className="block text-sm font-medium mb-1.5"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    验证码
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="emailCode"
+                      type="text"
+                      value={emailCode}
+                      onChange={(e) => setEmailCode(e.target.value)}
+                      placeholder="请输入 6 位验证码"
+                      maxLength={6}
+                      className="flex-1 h-11 px-3.5 text-sm rounded-lg border outline-none transition-all duration-150"
+                      style={{
+                        backgroundColor: 'var(--bg-surface)',
+                        borderColor: 'var(--border-default)',
+                        color: 'var(--text-primary)',
+                        fontFamily: 'var(--font-mono)',
+                        letterSpacing: '0.1em',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--border-focus)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px var(--color-primary-50)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--border-default)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={onSendLoginCode}
+                      disabled={sendingCode || codeCountdown > 0}
+                      className="h-11 px-4 text-sm rounded-lg border whitespace-nowrap transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        borderColor: 'var(--border-default)',
+                        backgroundColor: 'var(--bg-surface)',
+                        color: codeCountdown > 0 ? 'var(--text-tertiary)' : 'var(--color-primary)',
+                      }}
+                    >
+                      {codeCountdown > 0 ? `${codeCountdown}s` : sendingCode ? '发送中…' : '发送验证码'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* 登录按钮 */}
             <Button

@@ -28,14 +28,42 @@
 ## [Unreleased]
 
 ### 新增
+- 新增 HTML 邮件模板系统（server/src/mailTemplates.ts），对齐项目 Clean & Minimal 设计风格，使用 table 布局兼容主流邮件客户端，内联 Logo + 品牌色顶栏 + 卡片内容 + 底部版权
+- 新增登录验证码专属邮件模板，与注册验证码邮件文案区分（登录 vs 注册场景）
+- 新增 SMTP 测试邮件专属模板，包含站点名称、发送时间、邮件类型标签等诊断信息
+- 新增通用异常路由页面组件（client/src/pages/ErrorPage.tsx），覆盖 404/403/500/502/503 五种常见 HTTP 异常状态
+- 每个错误码配备独立 SVG 插画与主题色（罗盘/锁/齿轮/云/扳手），支持深色主题自动适配
+- 注册独立异常路由（/403 /500 /502 /503 /404），未匹配路径统一兜底为 404 页面
 - 新增数据库版本化迁移系统（migrations.ts），维护 schema_migrations 表追踪数据库版本号，启动时自动检查并执行未应用的迁移，确保旧版数据库兼容升级
 - CREATE TABLE 语句补全 users 表全部字段（display_name/email/bio/avatar/status/failed_login_attempts/locked_until），新库直接创建最新完整结构
 - agent.md 新增 4.1 数据库迁移与版本管理规范，约束后续数据库结构修改必须追加版本化迁移
+- 新增注册邮箱验证功能：填写邮箱时发送 6 位验证码验证邮箱真实性，5 分钟有效，60 秒发送冷却，SMTP 未配置时开发模式直接返回验证码
+- 新增邮箱验证码登录功能：用户可通过已绑定邮箱接收验证码进行无密码登录，支持失败锁定保护，登录页 Tab 切换密码/邮箱登录模式
+- 新增后台 SMTP 配置测试邮件功能：系统设置页面添加测试邮件输入框和发送按钮，可在保存配置前验证 SMTP 配置有效性
 
 ### 变更
+- 重构 mailer.ts：抽取公共方法（createTransporter / isSmtpReady / buildFrom），消除重复代码，4 种邮件函数各自调用对应模板
+- 登录验证码路由从复用 sendVerificationCodeEmail 改为调用专属 sendLoginCodeEmail，邮件标题与文案与注册场景区分
+- 测试邮件路由从复用 sendPasswordResetEmail 改为调用专属 sendTestEmail，不再发送模拟重置链接，改为发送真实测试诊断邮件
+- mailer 邮件函数返回类型扩展为 SendMailResultWithReason，新增 reason 字段区分失败原因（smtp_disabled / no_nodemailer / send_failed），便于上层精准提示
+- isSmtpReady 检查补全 pass 字段，避免仅启用 SMTP 但缺少密码时仍进入发送流程
+- sendTestEmail 增加 SMTP 配置完整性前置校验，未配置时直接返回 smtp_disabled 错误，不再返回 devLink 兜底（测试邮件需走真实链路）
+- 集成 logger 模块记录邮件发送全流程日志（info/warn/error 三级），便于运维排查
+- 优化 AdminRoute 路由守卫：已登录但无管理员权限时从跳转登录页改为展示 403 异常页面，提升用户体验
+- 兜底路由从强制跳转首页改为渲染 404 异常页面，使未匹配路径具备明确错误提示
 - 重构 index.ts 数据库初始化逻辑：移除 ad-hoc 增量迁移代码，改用 runMigrations() 版本化迁移引擎统一管理
+- 统一所有邮箱写入路径的归一化处理（toLowerCase + trim），消除大小写差异导致的重复绑定漏洞
+- 完善 passwordResetTemplate 密码重置邮件模板：新增钥匙圆形图标、用户名问候语、请求/过期时间信息表、3 步操作指引列表、黄色安全警告提示框，同时 sendPasswordResetEmail 与 auth 路由传递 username 参数到模板
 
 ### 修复
+- 修复管理员后台创建用户未计算 SRP verifier 导致 HTTP 环境下无法登录的问题
+- 修复管理员重置用户密码未同步更新 SRP verifier 导致改密后 SRP 登录失效的问题
+- 修复用户自助修改密码未同步更新 SRP verifier 的问题
+- 修复管理员备份导入恢复用户数据时遗漏 srpSalt/srpVerifier 字段的问题
+- 修复管理员创建用户、更新用户、用户自助更新资料、用户备份恢复四处邮箱写入缺少唯一性检查导致重复绑定的问题
+- 修复 SMTP 发送时因发件人邮箱与认证用户不一致导致的 553 错误：buildFrom 增加三级回退策略（一致 > 同域 > 回退 user），自动避免 553 错误
+- 修复 SMTP 错误信息不友好问题：新增 translateSmtpError 函数，将 535/550/553/554/421 等常见错误码转换为中文排查提示，前端展示给管理员
+- 修复测试邮件失败时无法跳转日志排查问题：检测到 553 错误时弹出排查步骤提示框，确认后自动打开后端日志页面
 
 ### 移除
 

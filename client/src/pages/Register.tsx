@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { OAuthIcon } from '../components/ui/OAuthIcon';
@@ -42,6 +42,10 @@ export default function Register() {
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [codeCountdown, setCodeCountdown] = useState(0);
+  const [sendingCode, setSendingCode] = useState(false);
+  const codeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -51,6 +55,59 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
 
   const strength = useMemo(() => calcStrength(password), [password]);
+
+  // 组件卸载时清除倒计时定时器
+  useEffect(() => {
+    return () => {
+      if (codeTimerRef.current) clearInterval(codeTimerRef.current);
+    };
+  }, []);
+
+  // 发送邮箱验证码
+  const onSendCode = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.warning('请先填写邮箱地址');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.warning('邮箱格式不正确');
+      return;
+    }
+
+    setSendingCode(true);
+    try {
+      const { data } = await api.post('/auth/email/send-code', { email: trimmedEmail });
+      if (!data.sent && data.devCode) {
+        // 开发模式：SMTP 未配置，验证码直接返回
+        toast.info(`开发模式：验证码为 ${data.devCode}`);
+        setEmailCode(data.devCode);
+      } else {
+        toast.success('验证码已发送至邮箱');
+      }
+      // 启动 60 秒倒计时
+      setCodeCountdown(60);
+      codeTimerRef.current = setInterval(() => {
+        setCodeCountdown((prev) => {
+          if (prev <= 1) {
+            if (codeTimerRef.current) {
+              clearInterval(codeTimerRef.current);
+              codeTimerRef.current = null;
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || '验证码发送失败';
+      toast.error(msg);
+    } finally {
+      setSendingCode(false);
+    }
+  };
 
   // 动态设置页面标题
   useEffect(() => {
@@ -87,6 +144,11 @@ export default function Register() {
       toast.warning('请输入邀请码');
       return;
     }
+    // 填写邮箱时必须输入验证码
+    if (email.trim() && !emailCode.trim()) {
+      toast.warning('请输入邮箱验证码');
+      return;
+    }
     if (!agree) {
       toast.warning('请阅读并同意用户协议和隐私政策');
       return;
@@ -100,14 +162,16 @@ export default function Register() {
       // - HTTP：SRP 流程，客户端计算 verifier 后提交（密码不传输）
       if (isSecureContext()) {
         let encryptedPassword = await encryptPassword(password);
+        const registerPayload = {
+          username: trimmedUsername,
+          password: encryptedPassword,
+          email: email.trim() || undefined,
+          emailCode: email.trim() ? emailCode.trim() : undefined,
+          role: 'USER',
+          ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
+        };
         try {
-          await api.post('/auth/register', {
-            username: trimmedUsername,
-            password: encryptedPassword,
-            email: email.trim() || undefined,
-            role: 'USER',
-            ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
-          });
+          await api.post('/auth/register', registerPayload);
         } catch (err: unknown) {
           const axiosErr = err as { response?: { status?: number; data?: { error?: string } } };
           // RSA 密钥可能已重新生成，旧公钥加密的数据无法被新私钥解密
@@ -115,11 +179,8 @@ export default function Register() {
             clearPublicKeyCache();
             encryptedPassword = await encryptPassword(password);
             await api.post('/auth/register', {
-              username: trimmedUsername,
+              ...registerPayload,
               password: encryptedPassword,
-              email: email.trim() || undefined,
-              role: 'USER',
-              ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
             });
           } else {
             throw err;
@@ -132,6 +193,7 @@ export default function Register() {
           salt,
           verifier,
           email: email.trim() || undefined,
+          emailCode: email.trim() ? emailCode.trim() : undefined,
           ...(needInviteCode ? { inviteCode: inviteCode.trim() } : {}),
         });
       }
@@ -278,7 +340,7 @@ export default function Register() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="请输入邮箱地址（可选）"
+                placeholder="请输入邮箱地址（需验证）"
                 autoComplete="email"
                 className="w-full h-11 px-3.5 text-sm rounded-lg border outline-none transition-all duration-150"
                 style={{
@@ -297,6 +359,59 @@ export default function Register() {
                 }}
               />
             </div>
+
+            {/* 邮箱验证码（填写邮箱后显示） */}
+            {email.trim() && (
+              <div>
+                <label
+                  htmlFor="emailCode"
+                  className="block text-sm font-medium mb-1.5"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  邮箱验证码
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="emailCode"
+                    type="text"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    placeholder="请输入 6 位验证码"
+                    maxLength={6}
+                    className="flex-1 h-11 px-3.5 text-sm rounded-lg border outline-none transition-all duration-150"
+                    style={{
+                      backgroundColor: 'var(--bg-surface)',
+                      borderColor: 'var(--border-default)',
+                      color: 'var(--text-primary)',
+                      fontFamily: 'var(--font-mono)',
+                      letterSpacing: '0.1em',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border-focus)';
+                      e.currentTarget.style.boxShadow =
+                        '0 0 0 3px var(--color-primary-50)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border-default)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={onSendCode}
+                    disabled={sendingCode || codeCountdown > 0}
+                    className="h-11 px-4 text-sm rounded-lg border whitespace-nowrap transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: 'var(--border-default)',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: codeCountdown > 0 ? 'var(--text-tertiary)' : 'var(--color-primary)',
+                    }}
+                  >
+                    {codeCountdown > 0 ? `${codeCountdown}s` : sendingCode ? '发送中…' : '发送验证码'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 邀请码（仅邀请码注册模式显示） */}
             {needInviteCode && (
