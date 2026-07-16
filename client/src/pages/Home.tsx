@@ -68,7 +68,7 @@ export default function Home() {
   const [itemIcon, setItemIcon] = useState('');
   const [itemGroupId, setItemGroupId] = useState<number | ''>('');
   const [itemCategoryId, setItemCategoryId] = useState<number | ''>('');
-  const [itemColor, setItemColor] = useState('#ffffff');
+  const [itemColor, setItemColor] = useState('#4F6EF7');
   const [itemShape, setItemShape] = useState<Shape>('rounded');
   const [itemSize, setItemSize] = useState<Size>('sm');
   const [itemNote, setItemNote] = useState('');
@@ -177,6 +177,12 @@ export default function Home() {
     if (!itemGroupId) return [];
     return groups.find((g) => g.id === itemGroupId)?.categories ?? [];
   }, [groups, itemGroupId]);
+
+  // 编辑 Modal：当前选中分组下的分类列表
+  const editCategoriesOfSelectedGroup = useMemo(() => {
+    if (!editingItem?.groupId) return [];
+    return groups.find((g) => g.id === editingItem.groupId)?.categories ?? [];
+  }, [groups, editingItem?.groupId]);
 
   // 重置创建表单
   const resetCreateForm = () => {
@@ -349,6 +355,8 @@ export default function Home() {
         title: editingItem.title,
         url: editingItem.url,
         icon: editingItem.icon,
+        groupId: editingItem.groupId,
+        categoryId: editingItem.categoryId,
         color: editingItem.color,
         shape: editingItem.shape,
         size: editingItem.size,
@@ -1216,6 +1224,36 @@ export default function Home() {
       <Modal open={!!editingItem} onClose={() => setEditingItem(null)} title="编辑卡片">
         {editingItem && (
           <form onSubmit={onUpdateItem} className="space-y-4">
+            {/* 分组选择 */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>所属分组</label>
+              <select
+                value={editingItem.groupId ?? ''}
+                onChange={(e) => setEditingItem({ ...editingItem, groupId: e.target.value ? Number(e.target.value) : null, categoryId: null })}
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none"
+                style={{ borderColor: 'var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+              >
+                <option value="">请选择分组</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+            {/* 分类选择 */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>所属分类（可选）</label>
+              <select
+                value={editingItem.categoryId ?? ''}
+                onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value ? Number(e.target.value) : null })}
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none"
+                style={{ borderColor: 'var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+              >
+                <option value="">不选择分类</option>
+                {editCategoriesOfSelectedGroup.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
             <Input label="标题" value={editingItem.title} onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })} placeholder={autoFetching ? '正在获取网页标题…' : ''} />
             <Input label="链接" value={editingItem.url} onChange={(e) => setEditingItem({ ...editingItem, url: e.target.value })} onBlur={onEditUrlBlur} />
             {/* 图标上传 */}

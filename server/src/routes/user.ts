@@ -611,11 +611,13 @@ userRouter.post('/nav/item', (req, res) => {
 /**
  * PUT /api/user/nav/item/:id
  * 鉴权：需登录
- * body: { title?, url?, icon?, categoryId?, orderIndex?, color?, shape?, size?, note? }
+ * body: { title?, url?, icon?, groupId?, categoryId?, orderIndex?, color?, shape?, size?, note? }
  * 更新自己的卡片
  * 安全约束：
  * - 卡片必须归属当前用户（通过 groupId->group 链路校验），否则 403
+ * - 若传入新的 groupId，新分组必须归属当前用户，否则 403
  * - 若传入新的 categoryId，新分类所属分组也必须归属当前用户，否则 403
+ * - 若更换 groupId 但未传 categoryId，原有 categoryId 清空（防止跨分组引用无效分类）
  */
 userRouter.put('/nav/item/:id', (req, res) => {
   const userId = req.user!.id;
@@ -637,12 +639,38 @@ userRouter.put('/nav/item/:id', (req, res) => {
     return;
   }
 
-  const { title, url, icon, categoryId, orderIndex, color, shape, size, note } = req.body ?? {};
+  const { title, url, icon, groupId, categoryId, orderIndex, color, shape, size, note } = req.body ?? {};
+
+  // 若更换分组，校验新分组归属当前用户
+  let newGroupId: number | undefined;
+  if (groupId !== undefined && groupId !== existing.groupId) {
+    if (groupId !== null && !getOwnedGroup(groupId, userId)) {
+      res.status(403).json({ error: '无权操作该分组' });
+      return;
+    }
+    newGroupId = groupId;
+  }
 
   // 若更换分类，校验新分类归属当前用户
+  let newCategoryId: number | null | undefined;
   if (categoryId !== undefined && categoryId !== existing.categoryId) {
     if (categoryId !== null && !getOwnedCategory(categoryId, userId)) {
       res.status(403).json({ error: '无权操作该分类' });
+      return;
+    }
+    newCategoryId = categoryId;
+  }
+
+  // 若更换了分组但未传 categoryId，清空原分类（防止跨分组引用无效分类）
+  if (newGroupId !== undefined && newCategoryId === undefined) {
+    newCategoryId = null;
+  }
+
+  // 若更换了分组且传了 categoryId，校验分类属于新分组
+  if (newGroupId !== undefined && newCategoryId !== undefined && newCategoryId !== null) {
+    const cat = getOwnedCategory(newCategoryId, userId);
+    if (!cat || cat.groupId !== newGroupId) {
+      res.status(400).json({ error: '分类不属于所选分组' });
       return;
     }
   }
@@ -652,7 +680,8 @@ userRouter.put('/nav/item/:id', (req, res) => {
   if (title !== undefined) patch.title = title;
   if (url !== undefined) patch.url = url;
   if (icon !== undefined) patch.icon = icon;
-  if (categoryId !== undefined) patch.categoryId = categoryId;
+  if (newGroupId !== undefined) patch.groupId = newGroupId;
+  if (newCategoryId !== undefined) patch.categoryId = newCategoryId;
   if (orderIndex !== undefined) patch.orderIndex = orderIndex;
   if (color !== undefined) patch.color = color;
   if (shape !== undefined) {

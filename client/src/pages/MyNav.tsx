@@ -12,6 +12,16 @@ import type { NavGroup, NavItem } from '../types';
 type Shape = 'rounded' | 'square';
 type Size = 'sm' | 'md' | 'lg';
 
+/** 判断颜色是否为浅色（用于决定文字颜色） */
+function isLightColor(hex: string | null): boolean {
+  if (!hex || !hex.startsWith('#')) return false;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.7;
+}
+
 /** 垃圾桶图标路径（Heroicons outline trash） */
 const TRASH_ICON =
   'M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0';
@@ -40,12 +50,24 @@ export default function MyNav() {
   const [itemIcon, setItemIcon] = useState('');
   const [itemGroupId, setItemGroupId] = useState<number | ''>('');
   const [itemCategoryId, setItemCategoryId] = useState<number | ''>('');
-  const [itemColor, setItemColor] = useState('#ffffff');
+  const [itemColor, setItemColor] = useState('#4F6EF7');
   const [itemShape, setItemShape] = useState<Shape>('rounded');
   const [itemSize, setItemSize] = useState<Size>('sm');
   const [itemNote, setItemNote] = useState('');
 
+  // 快速创建分组 / 分类（在新建卡片 Modal 内联）
+  const [quickGroupName, setQuickGroupName] = useState('');
+  const [quickCatName, setQuickCatName] = useState('');
+
   const [editingItem, setEditingItem] = useState<NavItem | null>(null);
+
+  // 图标上传
+  const [uploadingIcon, setUploadingIcon] = useState(false);
+  const createIconRef = useRef<HTMLInputElement>(null);
+  const editIconRef = useRef<HTMLInputElement>(null);
+
+  // URL 失焦自动获取标题
+  const [autoFetching, setAutoFetching] = useState(false);
 
   // ===== 批量管理状态 =====
   const [batchMode, setBatchMode] = useState(false);
@@ -68,6 +90,79 @@ export default function MyNav() {
     );
     return { groupCount, categoryCount, itemCount };
   }, [groups]);
+
+  // 编辑 Modal：当前选中分组下的分类列表
+  const editCategoriesOfSelectedGroup = useMemo(() => {
+    if (!editingItem?.groupId) return [];
+    return groups.find((g) => g.id === editingItem.groupId)?.categories ?? [];
+  }, [groups, editingItem?.groupId]);
+
+  // ===== 图标上传：读取文件 → base64 → POST /user/nav/icon → 返回 URL =====
+  const onPickIcon = async (file: File, mode: 'create' | 'edit') => {
+    if (!file) return;
+    setUploadingIcon(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const dataUrl = reader.result as string;
+        const { data } = await api.post<{ icon: string }>('/user/nav/icon', { icon: dataUrl });
+        if (mode === 'create') {
+          setItemIcon(data.icon);
+        } else {
+          setEditingItem((prev) => prev ? { ...prev, icon: data.icon } : prev);
+        }
+        toast.success('图标上传成功');
+      } catch (e) {
+        toast.error((e as { response?: { data?: { error?: string } } })?.response?.data?.error || '图标上传失败');
+      } finally {
+        setUploadingIcon(false);
+        if (mode === 'create' && createIconRef.current) createIconRef.current.value = '';
+        if (mode === 'edit' && editIconRef.current) editIconRef.current.value = '';
+      }
+    };
+    reader.onerror = () => {
+      toast.error('图片读取失败');
+      setUploadingIcon(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ===== URL 失焦时自动获取网页标题（标题为空时才触发） =====
+  const onUrlBlur = async () => {
+    const url = itemUrl.trim();
+    if (!url || itemTitle.trim()) return;
+    setAutoFetching(true);
+    try {
+      const { data } = await api.get<{ title: string; favicon: string }>('/util/meta', { params: { url } });
+      if (data.title) {
+        setItemTitle(data.title);
+        toast.success('已自动获取网页标题');
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setAutoFetching(false);
+    }
+  };
+
+  // 编辑 Modal：URL 失焦时自动获取网页标题
+  const onEditUrlBlur = async () => {
+    if (!editingItem) return;
+    const url = editingItem.url.trim();
+    if (!url || editingItem.title.trim()) return;
+    setAutoFetching(true);
+    try {
+      const { data } = await api.get<{ title: string; favicon: string }>('/util/meta', { params: { url } });
+      if (data.title) {
+        setEditingItem({ ...editingItem, title: data.title });
+        toast.success('已自动获取网页标题');
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setAutoFetching(false);
+    }
+  };
 
   // ===== 创建分组（私有，不传 isPublic） =====
   const onCreateGroup = async (e: FormEvent) => {
@@ -106,6 +201,44 @@ export default function MyNav() {
       await fetchMyNav();
     } catch (e2) {
       toast.error((e2 as { response?: { data?: { error?: string } } })?.response?.data?.error || '操作失败');
+    }
+  };
+
+  // ===== 快速创建分组（新建卡片 Modal 内联） =====
+  const onQuickCreateGroup = async () => {
+    if (!quickGroupName.trim()) {
+      toast.warning('分组名称不能为空');
+      return;
+    }
+    try {
+      const { data } = await api.post<{ id: number }>('/user/nav/group', { name: quickGroupName.trim() });
+      toast.success('分组创建成功');
+      setQuickGroupName('');
+      await fetchMyNav();
+      setItemGroupId(data.id);
+    } catch (e2) {
+      toast.error((e2 as { response?: { data?: { error?: string } } })?.response?.data?.error || '创建失败');
+    }
+  };
+
+  // ===== 快速创建分类（新建卡片 Modal 内联） =====
+  const onQuickCreateCategory = async () => {
+    if (!itemGroupId) {
+      toast.warning('请先选择分组');
+      return;
+    }
+    if (!quickCatName.trim()) {
+      toast.warning('分类名称不能为空');
+      return;
+    }
+    try {
+      const { data } = await api.post<{ id: number }>('/user/nav/category', { name: quickCatName.trim(), groupId: Number(itemGroupId) });
+      toast.success('分类创建成功');
+      setQuickCatName('');
+      await fetchMyNav();
+      setItemCategoryId(data.id);
+    } catch (e2) {
+      toast.error((e2 as { response?: { data?: { error?: string } } })?.response?.data?.error || '创建失败');
     }
   };
 
@@ -151,6 +284,8 @@ export default function MyNav() {
         title: editingItem.title,
         url: editingItem.url,
         icon: editingItem.icon,
+        groupId: editingItem.groupId,
+        categoryId: editingItem.categoryId,
         color: editingItem.color,
         shape: editingItem.shape,
         size: editingItem.size,
@@ -516,9 +651,10 @@ export default function MyNav() {
                               )}
                               <button
                                 onClick={() => (batchMode ? toggleItemSelection(it.id) : setEditingItem({ ...it }))}
-                                className="flex items-center gap-1.5 sm:gap-2 rounded-lg px-3 py-2 sm:py-1.5 text-[13px] sm:text-xs text-white border transition hover:scale-105"
+                                className="flex items-center gap-1.5 sm:gap-2 rounded-lg px-3 py-2 sm:py-1.5 text-[13px] sm:text-xs border transition hover:scale-105"
                                 style={{
                                   backgroundColor: it.color ?? 'var(--color-primary)',
+                                  color: isLightColor(it.color) ? 'var(--text-primary)' : '#fff',
                                   borderColor: 'transparent',
                                   boxShadow: batchMode && selectedItems.has(it.id) ? '0 0 0 2px var(--color-primary)' : 'none',
                                 }}
@@ -604,9 +740,38 @@ export default function MyNav() {
       {/* ===== 创建卡片 Modal ===== */}
       <Modal open={showCreateItem} onClose={() => setShowCreateItem(false)} title="新建卡片">
         <form onSubmit={onCreateItem} className="space-y-4">
-          <Input label="标题" value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="如：Google" />
-          <Input label="链接" value={itemUrl} onChange={(e) => setItemUrl(e.target.value)} placeholder="https://..." />
-          <Input label="图标 (Emoji 或文字)" value={itemIcon} onChange={(e) => setItemIcon(e.target.value)} placeholder="🔍" />
+          <Input label="标题" value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder={autoFetching ? '正在获取网页标题…' : '如：Google'} />
+          <Input label="链接" value={itemUrl} onChange={(e) => setItemUrl(e.target.value)} onBlur={onUrlBlur} placeholder="https://..." />
+          {/* 图标上传 */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>图标</label>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden"
+                style={{ backgroundColor: itemColor }}
+              >
+                {itemIcon ? (
+                  <img src={itemIcon} alt="icon" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>无</span>
+                )}
+              </div>
+              <input
+                ref={createIconRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                onChange={(e) => e.target.files?.[0] && onPickIcon(e.target.files[0], 'create')}
+                className="hidden"
+              />
+              <Button type="button" variant="outline" onClick={() => createIconRef.current?.click()} disabled={uploadingIcon}>
+                {uploadingIcon ? '上传中…' : itemIcon ? '更换图标' : '上传图标'}
+              </Button>
+              {itemIcon && (
+                <Button type="button" variant="outline" onClick={() => setItemIcon('')}>移除</Button>
+              )}
+            </div>
+            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>留空将自动获取网站图标</span>
+          </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>备注</span>
             <textarea
@@ -636,6 +801,17 @@ export default function MyNav() {
               ))}
             </select>
           </div>
+          {/* 快速创建分组 */}
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <Input
+                value={quickGroupName}
+                onChange={(e) => setQuickGroupName(e.target.value)}
+                placeholder="或输入新分组名"
+              />
+            </div>
+            <Button type="button" variant="outline" onClick={onQuickCreateGroup}>创建分组</Button>
+          </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>所属分类（可选）</label>
             <select
@@ -650,6 +826,19 @@ export default function MyNav() {
               ))}
             </select>
           </div>
+          {/* 快速创建分类（需先选择分组） */}
+          {itemGroupId && (
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <Input
+                  value={quickCatName}
+                  onChange={(e) => setQuickCatName(e.target.value)}
+                  placeholder="或输入新分类名"
+                />
+              </div>
+              <Button type="button" variant="outline" onClick={onQuickCreateCategory}>创建分类</Button>
+            </div>
+          )}
           <ColorPicker value={itemColor} onChange={setItemColor} />
           <div className="flex flex-col gap-1.5">
             <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>形状</span>
@@ -702,9 +891,68 @@ export default function MyNav() {
       <Modal open={!!editingItem} onClose={() => setEditingItem(null)} title="编辑卡片">
         {editingItem && (
           <form onSubmit={onUpdateItem} className="space-y-4">
-            <Input label="标题" value={editingItem.title} onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })} />
-            <Input label="链接" value={editingItem.url} onChange={(e) => setEditingItem({ ...editingItem, url: e.target.value })} />
-            <Input label="图标" value={editingItem.icon ?? ''} onChange={(e) => setEditingItem({ ...editingItem, icon: e.target.value })} />
+            {/* 分组选择 */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>所属分组</label>
+              <select
+                value={editingItem.groupId ?? ''}
+                onChange={(e) => setEditingItem({ ...editingItem, groupId: e.target.value ? Number(e.target.value) : null, categoryId: null })}
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none"
+                style={{ borderColor: 'var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+              >
+                <option value="">请选择分组</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+            {/* 分类选择 */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>所属分类（可选）</label>
+              <select
+                value={editingItem.categoryId ?? ''}
+                onChange={(e) => setEditingItem({ ...editingItem, categoryId: e.target.value ? Number(e.target.value) : null })}
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none"
+                style={{ borderColor: 'var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+              >
+                <option value="">不选择分类</option>
+                {editCategoriesOfSelectedGroup.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <Input label="标题" value={editingItem.title} onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })} placeholder={autoFetching ? '正在获取网页标题…' : ''} />
+            <Input label="链接" value={editingItem.url} onChange={(e) => setEditingItem({ ...editingItem, url: e.target.value })} onBlur={onEditUrlBlur} />
+            {/* 图标上传 */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm" style={{ color: 'var(--text-secondary)' }}>图标</label>
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden"
+                  style={{ backgroundColor: editingItem.color ?? '#4F6EF7' }}
+                >
+                  {editingItem.icon ? (
+                    <img src={editingItem.icon} alt="icon" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>无</span>
+                  )}
+                </div>
+                <input
+                  ref={editIconRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(e) => e.target.files?.[0] && onPickIcon(e.target.files[0], 'edit')}
+                  className="hidden"
+                />
+                <Button type="button" variant="outline" onClick={() => editIconRef.current?.click()} disabled={uploadingIcon}>
+                  {uploadingIcon ? '上传中…' : editingItem.icon ? '更换图标' : '上传图标'}
+                </Button>
+                {editingItem.icon && (
+                  <Button type="button" variant="outline" onClick={() => setEditingItem({ ...editingItem, icon: null })}>移除</Button>
+                )}
+              </div>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>留空将自动获取网站图标</span>
+            </div>
             <div className="flex flex-col gap-1.5">
               <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>备注</span>
               <textarea
