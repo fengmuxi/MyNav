@@ -15,13 +15,13 @@
  */
 
 /** 当前本地版本号（保持与 GitHub Release tag 一致，含 v 前缀） */
-export const VERSION = 'v1.2.0';
+export const VERSION = 'v1.3.0';
 
 /** 当前版本发布日期（ISO 字符串，仅日期部分） */
 export const RELEASE_DATE = '2026-07-15';
 
 /** 当前版本变更摘要（一句话简述，详细记录见 CHANGELOG.md） */
-export const CHANGELOG_SUMMARY = '新增邮箱验证码登录与数据库迁移系统，完善邮件与异常页面';
+export const CHANGELOG_SUMMARY = '卡片支持修改分组分类与图标上传，修复白底白字问题';
 
 /** 版本信息对象（用于 API 响应） */
 export interface VersionInfo {
